@@ -5,15 +5,15 @@ export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   // Allow the dev server to run before Supabase creds are in .env.local.
   // Auth-gated routes will still fail where they use the server client directly.
-  if (!url || !anonKey) return supabaseResponse;
+  if (!url || !publishableKey) return supabaseResponse;
 
   const supabase = createServerClient(
     url,
-    anonKey,
+    publishableKey,
     {
       cookies: {
         getAll() {
