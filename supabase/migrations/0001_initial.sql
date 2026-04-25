@@ -38,23 +38,6 @@ begin
 end;
 $$;
 
--- security definer so policies can ask "is the current user an admin?"
--- without recursing into the profiles RLS policy itself.
-create or replace function public.is_admin()
-returns boolean
-language sql
-security definer
-set search_path = public
-stable
-as $$
-  select coalesce(
-    (select role = 'admin' from public.profiles where id = (select auth.uid())),
-    false
-  );
-$$;
-
-grant execute on function public.is_admin() to authenticated;
-
 -- ============================================================
 -- profiles  (extends auth.users)
 -- ============================================================
@@ -70,6 +53,24 @@ create table public.profiles (
 create trigger profiles_set_updated_at
   before update on public.profiles
   for each row execute function public.set_updated_at();
+
+-- security definer so policies can ask "is the current user an admin?"
+-- without recursing into the profiles RLS policy itself.
+-- Defined after the profiles table so Postgres' SQL-function body check passes.
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(
+    (select role = 'admin' from public.profiles where id = (select auth.uid())),
+    false
+  );
+$$;
+
+grant execute on function public.is_admin() to authenticated;
 
 -- Block role escalation: only admins can change the role column.
 create or replace function public.guard_profile_role_update()
