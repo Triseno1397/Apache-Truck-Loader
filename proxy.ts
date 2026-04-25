@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
+import { isValidSession, SESSION_COOKIE } from "@/lib/auth";
 
-// Routes that don't require an authenticated session.
-const PUBLIC_PATHS = ["/login", "/auth"];
+const PUBLIC_PATHS = ["/login"];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(
@@ -11,21 +10,21 @@ function isPublicPath(pathname: string): boolean {
 }
 
 export async function proxy(request: NextRequest) {
-  const { response, user } = await updateSession(request);
   const pathname = request.nextUrl.pathname;
-  const isPublic = isPublicPath(pathname);
+  const cookie = request.cookies.get(SESSION_COOKIE)?.value;
+  const isAuthenticated = await isValidSession(cookie);
 
-  if (!user && !isPublic) {
+  if (!isAuthenticated && !isPublicPath(pathname)) {
     const loginUrl = new URL("/login", request.url);
     if (pathname !== "/") loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user && pathname === "/login") {
+  if (isAuthenticated && pathname === "/login") {
     return NextResponse.redirect(new URL("/jobs", request.url));
   }
 
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {

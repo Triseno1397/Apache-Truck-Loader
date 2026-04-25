@@ -1,21 +1,14 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function createJobAction(): Promise<never> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("jobs")
-    .insert({
-      name: "Untitled job",
-      created_by: user.id,
-    })
+    .insert({ name: "Untitled job" })
     .select("id")
     .single();
 

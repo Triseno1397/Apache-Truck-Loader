@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { cookies } from "next/headers";
+import { isValidSession, SESSION_COOKIE } from "@/lib/auth";
 import Header from "@/components/Header";
 
 export default async function AppLayout({
@@ -7,29 +8,14 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   // Defense in depth: proxy.ts already redirects unauthenticated users.
-  if (!user) {
-    redirect("/login");
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("display_name, role")
-    .eq("id", user.id)
-    .single();
+  const cookieStore = await cookies();
+  const ok = await isValidSession(cookieStore.get(SESSION_COOKIE)?.value);
+  if (!ok) redirect("/login");
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header
-        email={user.email ?? ""}
-        displayName={profile?.display_name ?? null}
-        role={profile?.role ?? null}
-      />
+      <Header />
       <main className="flex-1">{children}</main>
     </div>
   );

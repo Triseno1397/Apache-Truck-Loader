@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Package, Plus } from "lucide-react";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { TRUCK_PRESETS } from "@/lib/trucks";
 import { createJobAction } from "./actions";
 
@@ -40,7 +40,7 @@ function relativeTime(iso: string): string {
 }
 
 export default async function JobsPage() {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data: jobs, error } = await supabase
     .from("jobs")
     .select("id, name, client, event_date, status, truck_type, updated_at")

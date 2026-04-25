@@ -228,6 +228,16 @@ As user edits inputs, debounce writes to Supabase by 600ms. Show subtle "saving.
 
 ### 1. Authentication
 
+> **Phase 1 reality (changed from spec by client request):** A single
+> shared username/password gate. No per-user identity, no email step,
+> no audit trail. Credentials live in env vars (`APP_USERNAME` /
+> `APP_PASSWORD`); a signed cookie persists the session for ~1 year.
+> The full per-user model below is preserved as the Phase 2 roadmap;
+> the DB schema (profiles, created_by, RLS, etc.) already accommodates
+> it without migration.
+
+**Phase 2 (target):**
+
 - Email magic link via Supabase Auth
 - Admin can invite crew members via email
 - Roles:

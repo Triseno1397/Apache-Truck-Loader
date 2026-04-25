@@ -16,10 +16,36 @@ See `docs/apache-truck-loader-spec.md` for the complete feature and data-model s
 
 - Next.js 15+ (App Router) + TypeScript strict
 - Tailwind CSS v4 (no component libraries - write components from scratch)
-- Supabase (Postgres + Auth + RLS + realtime)
+- Supabase Postgres (data only - **not Supabase Auth** in Phase 1)
 - Deployed on Vercel
 - Fonts: Archivo (UI) + JetBrains Mono (numerics) via `next/font`
 - Icons: lucide-react only
+
+## Auth model (Phase 1: deliberate simplification)
+
+We swapped out per-user Supabase Auth for a **single shared
+username/password gate** at the user's request. Trade-offs were
+discussed and accepted: no audit trail, no per-user identity, no
+magic-link friction.
+
+- Credentials live in env vars (`APP_USERNAME`, `APP_PASSWORD`).
+- A signed cookie (`atl_session`, HMAC-SHA256 over a fixed payload
+  using `SESSION_SECRET`) is set on successful login and validated
+  in [proxy.ts](proxy.ts) on every request.
+- All DB access is server-side via the admin client in
+  [lib/supabase/admin.ts](lib/supabase/admin.ts), which uses the
+  Supabase **secret** key and bypasses RLS. **Never** import this
+  from a client component.
+- The browser never talks to Supabase directly. There is no
+  `lib/supabase/client.ts`.
+- The `profiles` table, `created_by` columns, `is_admin()`, the
+  `handle_new_user` trigger, and the RLS policies all still exist
+  in the schema - they're harmless when unused and make a future
+  re-introduction of per-user identity a small lift, not a rewrite.
+
+**Phase 2 (or whenever needed)** can layer real per-user identity
+back on top: re-add Supabase Auth, populate `created_by`, gate by
+`auth.uid()`. The schema already accommodates it.
 
 ## Aesthetic absolutes
 
