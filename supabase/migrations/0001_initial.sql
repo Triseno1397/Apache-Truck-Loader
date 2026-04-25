@@ -73,6 +73,8 @@ $$;
 grant execute on function public.is_admin() to authenticated;
 
 -- Block role escalation: only admins can change the role column.
+-- Bootstrap exception: if no admins exist yet, the very first promotion
+-- is allowed so a fresh install can crown its first admin via SQL.
 create or replace function public.guard_profile_role_update()
 returns trigger
 language plpgsql
@@ -80,7 +82,10 @@ security definer
 set search_path = public
 as $$
 begin
-  if old.role is distinct from new.role and not public.is_admin() then
+  if old.role is distinct from new.role
+     and not public.is_admin()
+     and exists (select 1 from public.profiles where role = 'admin')
+  then
     raise exception 'Only admins can change a user role';
   end if;
   return new;
