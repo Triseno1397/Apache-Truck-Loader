@@ -180,6 +180,103 @@ describe("packLoad - canonical scenarios from CLAUDE.md", () => {
   });
 });
 
+describe("packLoad - cross-vendor STACKING (small items on top of big bases)", () => {
+  it("Pelican 1510s from one vendor stack on road cases from another vendor", () => {
+    // Vendor A: 4 medium road cases (36 x 26 x 22, stackable max 3)
+    // Vendor B: 6 small Pelican 1510s (22 x 14 x 9, stackable max 6)
+    //
+    // Road cases sort first (deeper). They open shelf depth=36 and pack
+    // 3 across (78in used of 97in available, 19in remaining width). The
+    // 4th road case can't ground-fit (26in needed, 19in left), but it
+    // can stack on case1 (max 3). Pelicans then stack on the road cases
+    // from underneath - same shelf, different vendor, smaller dims.
+    const r = packVendors(
+      [
+        {
+          id: "cases-vendor",
+          vendorInput: {
+            method: "pieces",
+            case: { depthIn: 36, widthIn: 26, heightIn: 22, weightLb: 60 },
+            defaultStackable: true,
+            defaultMaxStack: 3,
+            quantity: 4,
+          },
+          weightOverride: null,
+        },
+        {
+          id: "pelican-vendor",
+          vendorInput: {
+            method: "pieces",
+            case: { depthIn: 22, widthIn: 14, heightIn: 9, weightLb: 14 },
+            defaultStackable: true,
+            defaultMaxStack: 6,
+            quantity: 6,
+          },
+          weightOverride: null,
+        },
+      ],
+      TRUCK_26,
+    );
+    // Should pack into a single shelf (depth=36, set by the road cases)
+    // with everything fitting via stacking + ground sharing.
+    expect(r.shelves).toHaveLength(1);
+    expect(r.totalLengthIn).toBe(36);
+
+    // Confirm Pelicans are physically stacked (not just placed on ground)
+    const pelicanStacked = r.shelves[0].stackedItems.filter(
+      (p) => p.item.vendorId === "pelican-vendor",
+    );
+    expect(pelicanStacked.length).toBeGreaterThan(0);
+  });
+
+  it("3 wide cases fill the ground; Pelicans MUST stack on the cases (no row 2)", () => {
+    // 3 wide cases (depth 36 x width 32 x height 22, stackable max 3):
+    // pack 3-across in 1 shelf at depth 36. Width used = 96 of 97 - the
+    // ground is effectively full (1in remaining, no Pelican fits).
+    //
+    // Then 4 small Pelicans (depth 22 x width 14 x height 9, stackable
+    // max 6): no ground room anywhere, but the cases are stackable.
+    // Pelicans ride on top of the cases - the truck length stays at
+    // 36in / 3 ft instead of opening a brand-new row for the Pelicans.
+    const r = packVendors(
+      [
+        {
+          id: "cases",
+          vendorInput: {
+            method: "pieces",
+            case: { depthIn: 36, widthIn: 32, heightIn: 22, weightLb: 60 },
+            defaultStackable: true,
+            defaultMaxStack: 3,
+            quantity: 3,
+          },
+          weightOverride: null,
+        },
+        {
+          id: "pelicans",
+          vendorInput: {
+            method: "pieces",
+            case: { depthIn: 22, widthIn: 14, heightIn: 9, weightLb: 14 },
+            defaultStackable: true,
+            defaultMaxStack: 6,
+            quantity: 4,
+          },
+          weightOverride: null,
+        },
+      ],
+      TRUCK_26,
+    );
+    expect(r.shelves).toHaveLength(1);
+    expect(r.totalLengthIn).toBe(36); // ZERO additional rows for the Pelicans
+    expect(r.shelves[0].groundItems).toHaveLength(3); // 3 cases on the floor
+
+    // All 4 Pelicans landed as STACKED items, not ground placements.
+    const pelicansOnTop = r.shelves[0].stackedItems.filter(
+      (p) => p.item.vendorId === "pelicans",
+    );
+    expect(pelicansOnTop).toHaveLength(4);
+  });
+});
+
 describe("packLoad - cross-vendor sharing pays off", () => {
   it("smart packing beats naive sum on a mixed load", () => {
     // 2 pallets + 4 Pelican 1620s
