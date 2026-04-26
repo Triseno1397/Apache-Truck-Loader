@@ -77,11 +77,15 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
         id: v.row.id,
         vendorInput: v.hydrated!,
         weightOverride: v.row.weight_lb_override,
+        canBeBase: v.row.can_be_base,
       })),
     truckCS,
   );
 
   const vendorColors = buildVendorColorMap(hydratedVendors.map((v) => v.row.id));
+  const vendorNames = new Map(
+    hydratedVendors.map((v) => [v.row.id, v.row.name]),
+  );
 
   const totalLinearFt = load.totalLengthIn / 12;
   const totalWeight = load.totalWeightLb;
@@ -154,6 +158,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
             truck={truckForMath}
             load={load}
             vendorColors={vendorColors}
+            vendorNames={vendorNames}
           />
         </div>
 
@@ -225,6 +230,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
                     unknown
                   >,
                   stackable: v.row.stackable,
+                  canBeBase: v.row.can_be_base,
                   weightOverride: v.row.weight_lb_override,
                   notes: v.row.notes,
                 }}

@@ -23,6 +23,7 @@ import {
   type CasePreset,
   type InputMethod,
 } from "@/lib/vendor-input";
+import { formatDims } from "@/lib/units";
 import {
   deleteVendorAction,
   updateVendorAction,
@@ -38,6 +39,7 @@ type Props = {
     inputMethod: InputMethod;
     inputData: Record<string, unknown>;
     stackable: boolean | null;
+    canBeBase: boolean | null;
     weightOverride: number | null;
     notes: string | null;
   };
@@ -108,6 +110,13 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
 
   const [stackable, setStackable] = useState<"default" | "true" | "false">(
     initial.stackable === null ? "default" : initial.stackable ? "true" : "false",
+  );
+
+  // "Can other gear be stacked on top of THIS vendor's gear?" - independent
+  // of the stackable flag (which is "can THIS gear be placed on top of
+  // others"). Default null = use the case preset's behavior.
+  const [canBeBase, setCanBeBase] = useState<"default" | "true" | "false">(
+    initial.canBeBase === null ? "default" : initial.canBeBase ? "true" : "false",
   );
 
   const [weightOverride, setWeightOverride] = useState(
@@ -185,6 +194,7 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
       inputMethod,
       inputData: buildInputData(),
       stackable: stackableToBool(stackable),
+      canBeBase: stackableToBool(canBeBase),
       weightOverride: parseWeightOverride(weightOverride),
       notes: notes.trim() || null,
     });
@@ -230,6 +240,7 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
     caseId,
     estimatedLinearFt,
     stackable,
+    canBeBase,
     weightOverride,
     notes,
   ]);
@@ -522,8 +533,9 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
                 <option value="">Select case type...</option>
                 {cases.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.label} &nbsp;·&nbsp; {c.depthIn}" x {c.widthIn}" x{" "}
-                    {c.heightIn}" &nbsp;·&nbsp; {c.weightLb} lb
+                    {c.label} &nbsp;·&nbsp;{" "}
+                    {formatDims(c.depthIn, c.widthIn, c.heightIn)} &nbsp;·&nbsp;{" "}
+                    {c.weightLb} lb
                   </option>
                 ))}
               </select>
@@ -576,36 +588,24 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         )}
       </div>
 
-      {/* Stackable toggle */}
+      {/* Stacking toggles - two independent flags. */}
       {supportsStacking && (
-        <div className="mb-4">
-          <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5">
-            Stacking
-          </label>
-          <div className="flex bg-white border border-[#d1d5db] rounded overflow-hidden">
-            {(
-              [
-                { v: "default", label: "Default" },
-                { v: "true", label: "Stack to ceiling" },
-                { v: "false", label: "Floor only" },
-              ] as const
-            ).map((opt) => {
-              const active = stackable === opt.v;
-              return (
-                <button
-                  key={opt.v}
-                  type="button"
-                  onClick={() => setStackable(opt.v)}
-                  className={`flex-1 px-2.5 py-2 text-xs font-medium transition min-h-[40px] ${
-                    active
-                      ? "bg-[#0e3e7a] text-white"
-                      : "text-[#5a6370] hover:text-[#272727]"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
+        <div className="mb-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5">
+              This gear can be stacked on top of others
+            </label>
+            <TriToggle value={stackable} onChange={setStackable} />
+          </div>
+          <div>
+            <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5">
+              Other gear can be stacked on top of this
+            </label>
+            <TriToggle
+              value={canBeBase}
+              onChange={setCanBeBase}
+              labels={{ default: "Default", true: "Yes", false: "No" }}
+            />
           </div>
         </div>
       )}
@@ -735,6 +735,44 @@ function StatusPill({ status, errorMsg }: { status: Status; errorMsg: string }) 
     );
   }
   return null;
+}
+
+function TriToggle({
+  value,
+  onChange,
+  labels,
+}: {
+  value: "default" | "true" | "false";
+  onChange: (v: "default" | "true" | "false") => void;
+  labels?: { default: string; true: string; false: string };
+}) {
+  const opts: ReadonlyArray<{ v: "default" | "true" | "false"; label: string }> =
+    [
+      { v: "default", label: labels?.default ?? "Default" },
+      { v: "true", label: labels?.true ?? "Yes" },
+      { v: "false", label: labels?.false ?? "No" },
+    ];
+  return (
+    <div className="flex bg-white border border-[#d1d5db] rounded overflow-hidden">
+      {opts.map((opt) => {
+        const active = value === opt.v;
+        return (
+          <button
+            key={opt.v}
+            type="button"
+            onClick={() => onChange(opt.v)}
+            className={`flex-1 px-2.5 py-2 text-xs font-medium transition min-h-[40px] ${
+              active
+                ? "bg-[#0e3e7a] text-white"
+                : "text-[#5a6370] hover:text-[#272727]"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function UnitToggle({

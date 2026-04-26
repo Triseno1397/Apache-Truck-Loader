@@ -13,6 +13,7 @@ type Props = {
   truck: TruckSpec;
   load: LoadResult;
   vendorColors: Map<string, string>;
+  vendorNames: Map<string, string>;
 };
 
 const PX_PER_FT = 18;
@@ -27,7 +28,12 @@ function fillColorFor(pct: number): string {
   return "#0e3e7a";
 }
 
-export default function TruckSVG({ truck, load, vendorColors }: Props) {
+export default function TruckSVG({
+  truck,
+  load,
+  vendorColors,
+  vendorNames,
+}: Props) {
   const truckLengthIn = truck.interiorLengthFt * 12;
   const fillPercent = load.totalLengthIn / truckLengthIn;
   const overColor = fillColorFor(fillPercent);
@@ -63,6 +69,7 @@ export default function TruckSVG({ truck, load, vendorColors }: Props) {
           fillPercent={fillPercent}
           overColor={overColor}
           vendorColors={vendorColors}
+          vendorNames={vendorNames}
         />
       ) : (
         <BoxTruckTopView
@@ -71,6 +78,7 @@ export default function TruckSVG({ truck, load, vendorColors }: Props) {
           fillPercent={fillPercent}
           overColor={overColor}
           vendorColors={vendorColors}
+          vendorNames={vendorNames}
         />
       )}
     </svg>
@@ -83,6 +91,7 @@ type ShapeProps = {
   fillPercent: number;
   overColor: string;
   vendorColors: Map<string, string>;
+  vendorNames: Map<string, string>;
 };
 
 // ----- 26ft Penske box truck (top view) ----------------------------------
@@ -93,6 +102,7 @@ function BoxTruckTopView({
   fillPercent,
   overColor,
   vendorColors,
+  vendorNames,
 }: ShapeProps) {
   const cargoLengthPx = truck.interiorLengthFt * PX_PER_FT;
   const cargoWidthPx = truck.interiorWidthFt * PX_PER_FT;
@@ -175,6 +185,7 @@ function BoxTruckTopView({
         truckWidthIn={truck.interiorWidthFt * 12}
         cargoLengthPx={cargoLengthPx}
         vendorColors={vendorColors}
+        vendorNames={vendorNames}
       />
 
       {/* Door split + liftgate */}
@@ -234,6 +245,7 @@ function SemiTopView({
   fillPercent,
   overColor,
   vendorColors,
+  vendorNames,
 }: ShapeProps) {
   const trailerLengthPx = truck.interiorLengthFt * PX_PER_FT;
   const trailerWidthPx = truck.interiorWidthFt * PX_PER_FT;
@@ -328,6 +340,7 @@ function SemiTopView({
         truckWidthIn={truck.interiorWidthFt * 12}
         cargoLengthPx={trailerLengthPx}
         vendorColors={vendorColors}
+        vendorNames={vendorNames}
       />
 
       <rect
@@ -392,6 +405,7 @@ function PackedItems({
   truckLengthIn,
   truckWidthIn,
   vendorColors,
+  vendorNames,
 }: {
   load: LoadResult;
   cargoStartX: number;
@@ -401,6 +415,7 @@ function PackedItems({
   truckLengthIn: number;
   truckWidthIn: number;
   vendorColors: Map<string, string>;
+  vendorNames: Map<string, string>;
 }) {
   const lengthScale = cargoLengthPx / truckLengthIn;
   const widthScale = cargoWidthPx / truckWidthIn;
@@ -416,6 +431,7 @@ function PackedItems({
           lengthScale={lengthScale}
           widthScale={widthScale}
           vendorColors={vendorColors}
+          vendorNames={vendorNames}
         />
       ))}
     </g>
@@ -429,6 +445,7 @@ function ShelfGroup({
   lengthScale,
   widthScale,
   vendorColors,
+  vendorNames,
 }: {
   shelf: Shelf;
   cargoStartX: number;
@@ -436,6 +453,7 @@ function ShelfGroup({
   lengthScale: number;
   widthScale: number;
   vendorColors: Map<string, string>;
+  vendorNames: Map<string, string>;
 }) {
   // Group ground items by base index so we can label stacks.
   const stackCounts = new Map<number, number>();
@@ -456,6 +474,17 @@ function ShelfGroup({
         const h = placed.item.widthIn * widthScale;
         const color = vendorColors.get(placed.item.vendorId) ?? "#0e3e7a";
         const stackedAbove = stackCounts.get(gi) ?? 0;
+        const rawName = vendorNames.get(placed.item.vendorId) ?? "";
+        // Truncate vendor name to fit the rect's width. ~7 px per char at
+        // size 8, so floor(w / 7) is a safe upper bound. Drop the name
+        // entirely if the rect is too cramped.
+        const maxChars = Math.max(0, Math.floor(w / 7));
+        const showName = w > 28 && h > 16 && maxChars > 3 && rawName.length > 0;
+        const displayName =
+          rawName.length > maxChars
+            ? rawName.slice(0, Math.max(0, maxChars - 1)) + "..."
+            : rawName;
+        const showStack = stackedAbove > 0 && w > 18 && h > 12;
 
         return (
           <g key={gi}>
@@ -469,10 +498,23 @@ function ShelfGroup({
               stroke={color}
               strokeWidth="1"
             />
-            {stackedAbove > 0 && w > 18 && h > 12 && (
+            {/* Vendor name label - small black ink, top-left of the rect */}
+            {showName && (
+              <text
+                x={x + 3}
+                y={y + 10}
+                fontSize="8"
+                fontFamily="JetBrains Mono, monospace"
+                fill="#272727"
+                style={{ pointerEvents: "none" }}
+              >
+                {displayName}
+              </text>
+            )}
+            {showStack && (
               <text
                 x={x + w / 2}
-                y={y + h / 2 + 3}
+                y={y + h / 2 + 4}
                 textAnchor="middle"
                 fontSize="9"
                 fontFamily="JetBrains Mono, monospace"

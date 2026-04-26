@@ -369,6 +369,29 @@ Admin screen to:
 
 ---
 
+## Phase 1 additions (added by client request after initial spec)
+
+These were added during build, not in the original spec, but are in
+scope for v1:
+
+- **Multi-truck per job.** Originally Phase 2 ("split loads"), pulled
+  forward: a single job can have N trucks, each independently packed.
+  Crew often loads two 26ft Penskes for one event.
+- **Drag-and-drop on the truck render.** Manually rearrange item
+  rectangles inside the cargo box if you want to override the auto
+  packer (Tetris mode). Persisted manual placements override the
+  algorithm for that vendor's items until cleared.
+- **Smart unit display.** Dimensions render in inches if <48in (small
+  cases) and in feet if >=48in (long items, truck dims). One helper
+  in [lib/units.ts](../lib/units.ts).
+- **`can_be_base` per vendor.** Independent of `stackable`. The old
+  single flag conflated "this gear stacks ON TOP of others" with
+  "OTHER gear can be stacked on top of this." Now they're separate.
+  Default for both: follows the case preset.
+- **Vendor name on the truck render.** Each item rectangle shows the
+  vendor name in small black text inside the rectangle (truncated to
+  fit; hidden if rect is too small).
+
 ## Phase 2 (post-launch, separate spec)
 
 Listed so the data model accommodates them without refactor:
@@ -377,7 +400,7 @@ Listed so the data model accommodates them without refactor:
 2. **Actual vs. estimated delta tracking.** After load is complete, user logs actual linear feet used. Tool learns which vendors lowball and which overestimate. Display historical accuracy per vendor.
 3. **AI image analysis.** User uploads photo of staged gear; Claude Vision identifies visible cases, pulls dimensions from case library, returns estimated linear ft. Includes confidence score.
 4. **Load order tracking.** Drag-to-reorder vendor list; "first on, last off" or reverse; export ordered load plan for driver.
-5. **Multi-truck split loads.** When gear exceeds one truck, tool suggests split across two trucks and lets user assign vendors to truck A vs. truck B.
+5. ~~Multi-truck split loads~~ - moved to Phase 1.
 6. **Crew-level permissions on individual jobs.** Not everyone should see every client's job.
 7. **Realtime collaboration.** Multiple crew members editing the same job see each other's changes live (Supabase realtime channels).
 

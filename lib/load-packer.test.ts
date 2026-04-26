@@ -99,15 +99,18 @@ describe("packLoad - the user's example case", () => {
     expect(result.unplaced).toHaveLength(0);
   });
 
-  it("3 pallets + 2 Pelican 1620s share row 2 - total stays 96in (NOT 96 + 28)", () => {
-    // The whole point of cross-vendor packing: small items slot into the
-    // half-empty row left by the 3rd pallet instead of opening a new row.
+  it("3 pallets + 2 Pelican 1620s with pallets NOT serving as bases - pelicans share row 2 ground", () => {
+    // Demonstrates GROUND sharing across vendors: with canBeBase explicitly
+    // disabled on the pallet vendor, the Pelicans can't stack on the pallets
+    // and instead drop into the half-empty row 2 next to the 3rd pallet.
+    // Total still stays 96in (the user's point about no new rows).
     const result = packVendors(
       [
         {
           id: "pallet-vendor",
           vendorInput: PALLET_INPUT(3),
           weightOverride: null,
+          canBeBase: false, // override: don't let pelicans land on top
         },
         {
           id: "pelican-vendor",
@@ -117,14 +120,42 @@ describe("packLoad - the user's example case", () => {
       ],
       TRUCK_26,
     );
-    expect(result.totalLengthIn).toBe(96); // 8 ft - same as just the pallets
+    expect(result.totalLengthIn).toBe(96);
     expect(result.shelves).toHaveLength(2);
-    // Pelicans land in shelf 2 (the half-empty pallet row)
     const shelf2Vendors = new Set(
       result.shelves[1].groundItems.map((p) => p.item.vendorId),
     );
     expect(shelf2Vendors).toContain("pallet-vendor");
     expect(shelf2Vendors).toContain("pelican-vendor");
+  });
+
+  it("3 pallets + 2 Pelican 1620s with default canBeBase=true on pallets - pelicans STACK on the pallets", () => {
+    // Real-world default: pallets ARE bases (you stack things on pallets all
+    // the time). With no explicit override, Pelicans land ON TOP of the
+    // pallets in row 1 - even more space-efficient than ground sharing.
+    const result = packVendors(
+      [
+        {
+          id: "pallet-vendor",
+          vendorInput: PALLET_INPUT(3),
+          weightOverride: null,
+          // no canBeBase override -> defaults to true for pallets
+        },
+        {
+          id: "pelican-vendor",
+          vendorInput: { ...PELICAN_1620, quantity: 2 },
+          weightOverride: null,
+        },
+      ],
+      TRUCK_26,
+    );
+    expect(result.totalLengthIn).toBe(96);
+    // Pelicans landed as STACKED items, not new ground placements
+    const allStacked = result.shelves.flatMap((s) => s.stackedItems);
+    const pelicansOnTop = allStacked.filter(
+      (p) => p.item.vendorId === "pelican-vendor",
+    );
+    expect(pelicansOnTop).toHaveLength(2);
   });
 });
 
@@ -343,6 +374,7 @@ describe("packLoad - edge cases", () => {
         heightIn: 24,
         weightLb: 0,
         stackable: false,
+        canBeBase: false,
         maxStack: 1,
         isBulk: false,
       },

@@ -112,6 +112,7 @@ const VendorUpdateSchema = z.object({
   inputMethod: InputMethodEnum,
   inputData: z.record(z.string(), z.unknown()),
   stackable: z.boolean().nullable(),
+  canBeBase: z.boolean().nullable(),
   weightOverride: z.number().nonnegative().nullable(),
   notes: z.string().trim().max(2000).nullable(),
 });
@@ -156,6 +157,7 @@ export async function updateVendorAction(args: {
   inputMethod: InputMethod;
   inputData: Record<string, unknown>;
   stackable: boolean | null;
+  canBeBase: boolean | null;
   weightOverride: number | null;
   notes: string | null;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -178,6 +180,7 @@ export async function updateVendorAction(args: {
       input_method: parsed.data.inputMethod,
       input_data: dataValidation.data as Json,
       stackable: parsed.data.stackable,
+      can_be_base: parsed.data.canBeBase,
       weight_lb_override: parsed.data.weightOverride,
       notes: parsed.data.notes,
     })

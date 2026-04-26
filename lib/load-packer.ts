@@ -37,7 +37,14 @@ export type PackableItem = {
   widthIn: number;
   heightIn: number;
   weightLb: number;
+  // Two independent stacking flags:
+  //   stackable -> "this item can be placed ON TOP of others" (acts as
+  //                a stacked item)
+  //   canBeBase -> "OTHER items can be placed on top of THIS one" (acts
+  //                as a base). Falls back to `stackable` when the source
+  //                doesn't specify - matches the old single-flag behavior.
   stackable: boolean;
+  canBeBase: boolean;
   maxStack: number;
   isBulk: boolean; // true for linear/cubic/footprint/image bulk blobs
 };
@@ -69,9 +76,11 @@ export function expandVendorToItems(args: {
   vendorId: string;
   vendorInput: VendorInput;
   weightOverride: number | null;
+  canBeBaseOverride?: boolean | null;
   truck: TruckCrossSection;
 }): PackableItem[] {
-  const { vendorId, vendorInput, weightOverride, truck } = args;
+  const { vendorId, vendorInput, weightOverride, canBeBaseOverride, truck } =
+    args;
 
   // For approximate methods, build a single bulk item that occupies the
   // full truck width for its converted linear feet. These can't share rows
@@ -86,6 +95,7 @@ export function expandVendorToItems(args: {
         heightIn: truck.heightIn,
         weightLb: Math.max(0, weightOverride ?? 0),
         stackable: false,
+        canBeBase: false, // bulk fills the whole row, no stacking surface
         maxStack: 1,
         isBulk: true,
       },
@@ -114,6 +124,9 @@ export function expandVendorToItems(args: {
       const stackable =
         vendorInput.stackable ??
         (vendorInput.heightIn > 0 && vendorInput.heightIn < 18);
+      // Default canBeBase = stackable (mirrors old single-flag behavior),
+      // unless the vendor explicitly opted in/out via the form toggle.
+      const canBeBase = canBeBaseOverride ?? stackable;
       const perItemWeight =
         weightOverride !== null && weightOverride !== undefined
           ? weightOverride / qty
@@ -125,7 +138,8 @@ export function expandVendorToItems(args: {
         heightIn: vendorInput.heightIn,
         weightLb: perItemWeight,
         stackable,
-        maxStack: 6, // generic safety cap from the spec
+        canBeBase,
+        maxStack: 6,
         isBulk: false,
       }));
     }
@@ -134,6 +148,9 @@ export function expandVendorToItems(args: {
       const qty = Math.max(0, Math.floor(vendorInput.quantity));
       if (qty === 0) return [];
       const stackable = vendorInput.stackable === true; // pallets default off
+      // Pallets DEFAULT to canBeBase=true (you stack things on pallets
+      // all the time even though you don't stack pallets on each other).
+      const canBeBase = canBeBaseOverride ?? true;
       const perItemWeight =
         weightOverride !== null && weightOverride !== undefined
           ? weightOverride / qty
@@ -145,6 +162,7 @@ export function expandVendorToItems(args: {
         heightIn: 48,
         weightLb: perItemWeight,
         stackable,
+        canBeBase,
         maxStack: 2,
         isBulk: false,
       }));
@@ -154,6 +172,7 @@ export function expandVendorToItems(args: {
       const qty = Math.max(0, Math.floor(vendorInput.quantity));
       if (qty === 0 || vendorInput.case.depthIn <= 0) return [];
       const stackable = vendorInput.stackable ?? vendorInput.defaultStackable;
+      const canBeBase = canBeBaseOverride ?? vendorInput.defaultStackable;
       const perItemWeight =
         weightOverride !== null && weightOverride !== undefined
           ? weightOverride / qty
@@ -165,6 +184,7 @@ export function expandVendorToItems(args: {
         heightIn: vendorInput.case.heightIn,
         weightLb: perItemWeight,
         stackable,
+        canBeBase,
         maxStack: vendorInput.defaultMaxStack,
         isBulk: false,
       }));
@@ -198,10 +218,10 @@ function tryFitGround(shelf: Shelf, item: PackableItem, truckWidthIn: number): P
 }
 
 function tryFitStacked(shelf: Shelf, item: PackableItem, truckHeightIn: number): PlacedItem | null {
-  if (!item.stackable) return null;
+  if (!item.stackable) return null; // item itself can't go on top of anything
   for (let i = 0; i < shelf.groundItems.length; i++) {
     const base = shelf.groundItems[i];
-    if (!base.item.stackable) continue;
+    if (!base.item.canBeBase) continue; // base refuses gear on top
     const cap = Math.max(1, base.item.maxStack);
     if (stackCountAbove(shelf, i) >= cap - 1) continue;
     if (item.widthIn > base.item.widthIn) continue;
@@ -278,6 +298,7 @@ export type VendorForPacking = {
   id: string;
   vendorInput: VendorInput;
   weightOverride: number | null;
+  canBeBase?: boolean | null; // override: "let other gear stack on top of mine"
 };
 
 export function packVendors(
@@ -291,6 +312,7 @@ export function packVendors(
         vendorId: v.id,
         vendorInput: v.vendorInput,
         weightOverride: v.weightOverride,
+        canBeBaseOverride: v.canBeBase ?? null,
         truck,
       }),
     );

@@ -267,6 +267,7 @@ export type Database = {
       }
       vendors: {
         Row: {
+          can_be_base: boolean | null
           created_at: string
           id: string
           input_data: Json
@@ -279,6 +280,7 @@ export type Database = {
           weight_lb_override: number | null
         }
         Insert: {
+          can_be_base?: boolean | null
           created_at?: string
           id?: string
           input_data?: Json
@@ -291,6 +293,7 @@ export type Database = {
           weight_lb_override?: number | null
         }
         Update: {
+          can_be_base?: boolean | null
           created_at?: string
           id?: string
           input_data?: Json
