@@ -3,18 +3,17 @@ import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Check, Package, Plus } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TRUCK_PRESETS, truckCrossSection } from "@/lib/trucks";
-import {
-  computeVendorLinearFeet,
-  computeVendorWeight,
-  effectiveLengthFt,
-} from "@/lib/packing";
+import { effectiveLengthFt } from "@/lib/packing";
 import { fetchAllCases, buildCaseLookup } from "@/lib/cases";
 import {
   hydrateVendorInput,
   type InputMethod,
 } from "@/lib/vendor-input";
+import { packVendors } from "@/lib/load-packer";
 import JobHeader from "@/components/job/JobHeader";
-import TruckSVG from "@/components/truck/TruckSVG";
+import TruckSVG, {
+  buildVendorColorMap,
+} from "@/components/truck/TruckSVG";
 import VendorRow from "@/components/vendor/VendorRow";
 import VendorForm from "@/components/vendor/VendorForm";
 
@@ -68,21 +67,24 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
     return { row: v, hydrated, inputMethod };
   });
 
-  // Totals
-  const totalLinearFt = hydratedVendors.reduce(
-    (sum, v) =>
-      sum +
-      (v.hydrated ? computeVendorLinearFeet(v.hydrated, truckCS) : 0),
-    0,
+  // Cross-vendor smart packing - the IP. Items from all vendors are placed
+  // into shelves together, so a small case slots into the half-empty row
+  // left by a previous vendor's pallets instead of opening a new row.
+  const load = packVendors(
+    hydratedVendors
+      .filter((v) => v.hydrated !== null)
+      .map((v) => ({
+        id: v.row.id,
+        vendorInput: v.hydrated!,
+        weightOverride: v.row.weight_lb_override,
+      })),
+    truckCS,
   );
-  const totalWeight = hydratedVendors.reduce(
-    (sum, v) =>
-      sum +
-      (v.hydrated
-        ? computeVendorWeight(v.hydrated, v.row.weight_lb_override)
-        : 0),
-    0,
-  );
+
+  const vendorColors = buildVendorColorMap(hydratedVendors.map((v) => v.row.id));
+
+  const totalLinearFt = load.totalLengthIn / 12;
+  const totalWeight = load.totalWeightLb;
 
   const effectiveLen = effectiveLengthFt(interiorLengthFt, job.buffer_pct);
   const lengthPct = totalLinearFt / interiorLengthFt;
@@ -143,11 +145,16 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
           )}
         </div>
 
-        {/* Top-view truck visualization (step 6). Fill grows from the cab
-            end toward the rear as gear is added - matches how loads are
-            actually built (heaviest against the cab wall first). */}
+        {/* Top-view truck visualization. Renders actual item rectangles
+            in their packed positions (cross-vendor shelf packing) - users
+            see WHERE each vendor's gear sits and the gaps available for
+            future vendors to slot into. Color-coded per vendor. */}
         <div className="px-3 sm:px-5 py-3 bg-white border-b border-[#e6e8eb]">
-          <TruckSVG truck={truckForMath} fillPercent={lengthPct} />
+          <TruckSVG
+            truck={truckForMath}
+            load={load}
+            vendorColors={vendorColors}
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#e6e8eb]">

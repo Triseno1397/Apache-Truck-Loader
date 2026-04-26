@@ -1,21 +1,22 @@
 // Top-view truck visualization. Front of the truck on the LEFT, rear
-// (doors / liftgate) on the RIGHT. The cargo box fills from the cab end
-// toward the back as load is added - mirrors how crews actually load.
+// (doors / liftgate) on the RIGHT. Items render in their actual packed
+// positions inside the cargo box - users SEE the gaps where future
+// vendors can slot in.
 //
 // Box truck (26ft Penske): cab + cargo box are one contiguous shape.
 // Semi (53ft): tractor + 5th-wheel gap + trailer.
-//
-// Both trucks share the same px-per-ft scale so size comparison stays
-// honest. The 26ft renders shorter inside the same viewBox.
 
 import type { TruckSpec } from "@/lib/trucks";
+import type { LoadResult, Shelf } from "@/lib/load-packer";
 
 type Props = {
   truck: TruckSpec;
-  fillPercent: number; // 0 = empty, 1.0 = full, >1 = over capacity
+  load: LoadResult;
+  vendorColors: Map<string, string>;
 };
 
 const PX_PER_FT = 18;
+const PX_PER_IN = PX_PER_FT / 12;
 const VIEWBOX_W = 1200;
 const VIEWBOX_H = 240;
 
@@ -26,8 +27,10 @@ function fillColorFor(pct: number): string {
   return "#0e3e7a";
 }
 
-export default function TruckSVG({ truck, fillPercent }: Props) {
-  const color = fillColorFor(fillPercent);
+export default function TruckSVG({ truck, load, vendorColors }: Props) {
+  const truckLengthIn = truck.interiorLengthFt * 12;
+  const fillPercent = load.totalLengthIn / truckLengthIn;
+  const overColor = fillColorFor(fillPercent);
   const isSemi = truck.id === "53ft_semi";
 
   return (
@@ -54,29 +57,43 @@ export default function TruckSVG({ truck, fillPercent }: Props) {
         </pattern>
       </defs>
       {isSemi ? (
-        <SemiTopView truck={truck} fillPercent={fillPercent} color={color} />
+        <SemiTopView
+          truck={truck}
+          load={load}
+          fillPercent={fillPercent}
+          overColor={overColor}
+          vendorColors={vendorColors}
+        />
       ) : (
         <BoxTruckTopView
           truck={truck}
+          load={load}
           fillPercent={fillPercent}
-          color={color}
+          overColor={overColor}
+          vendorColors={vendorColors}
         />
       )}
     </svg>
   );
 }
 
+type ShapeProps = {
+  truck: TruckSpec;
+  load: LoadResult;
+  fillPercent: number;
+  overColor: string;
+  vendorColors: Map<string, string>;
+};
+
 // ----- 26ft Penske box truck (top view) ----------------------------------
 
 function BoxTruckTopView({
   truck,
+  load,
   fillPercent,
-  color,
-}: {
-  truck: TruckSpec;
-  fillPercent: number;
-  color: string;
-}) {
+  overColor,
+  vendorColors,
+}: ShapeProps) {
   const cargoLengthPx = truck.interiorLengthFt * PX_PER_FT;
   const cargoWidthPx = truck.interiorWidthFt * PX_PER_FT;
   const cabLengthPx = 80;
@@ -87,14 +104,11 @@ function BoxTruckTopView({
   const cargoStartX = cabX + cabLengthPx;
   const cargoEndX = cargoStartX + cargoLengthPx;
   const liftgateX = cargoEndX;
-
-  const fillWidth = Math.min(1, fillPercent) * cargoLengthPx;
   const dimY = cargoY + cargoWidthPx + 28;
 
   return (
     <>
-      {/* Cab block (slightly taller than cargo box so it reads as wider).
-          Rounded front evokes the hood from above. */}
+      {/* Cab */}
       <path
         d={`M ${cabX + 14} ${cargoY - 10}
             L ${cabX + cabLengthPx} ${cargoY - 10}
@@ -107,7 +121,6 @@ function BoxTruckTopView({
         stroke="#9ca3af"
         strokeWidth="1.5"
       />
-      {/* Windshield - dark strip near the front of the cab */}
       <line
         x1={cabX + 22}
         y1={cargoY - 6}
@@ -116,7 +129,6 @@ function BoxTruckTopView({
         stroke="#272727"
         strokeWidth="1.5"
       />
-      {/* Headlights */}
       <circle cx={cabX + 4} cy={cargoY + 8} r="2.5" fill="#ffa902" />
       <circle
         cx={cabX + 4}
@@ -125,7 +137,7 @@ function BoxTruckTopView({
         fill="#ffa902"
       />
 
-      {/* Cargo box outline + interior grid */}
+      {/* Cargo box (white background + grid) */}
       <rect
         x={cargoStartX}
         y={cargoY}
@@ -142,8 +154,7 @@ function BoxTruckTopView({
         height={cargoWidthPx - 2}
         fill="url(#truck-grid)"
       />
-
-      {/* Centerline (subtle - reads as the truck's center axis from above) */}
+      {/* Centerline */}
       <line
         x1={cargoStartX}
         y1={cargoY + cargoWidthPx / 2}
@@ -154,20 +165,19 @@ function BoxTruckTopView({
         strokeDasharray="4 4"
       />
 
-      {/* FILL - grows from cab end toward rear */}
-      {fillPercent > 0 && (
-        <rect
-          x={cargoStartX + 1}
-          y={cargoY + 1}
-          width={Math.max(0, fillWidth - 2)}
-          height={cargoWidthPx - 2}
-          fill={color}
-          fillOpacity="0.6"
-          style={{ transition: "width 0.4s ease-out" }}
-        />
-      )}
+      {/* PACKED ITEMS - the actual load layout */}
+      <PackedItems
+        load={load}
+        cargoStartX={cargoStartX}
+        cargoY={cargoY}
+        cargoWidthPx={cargoWidthPx}
+        truckLengthIn={truck.interiorLengthFt * 12}
+        truckWidthIn={truck.interiorWidthFt * 12}
+        cargoLengthPx={cargoLengthPx}
+        vendorColors={vendorColors}
+      />
 
-      {/* Roll-up door split (vertical line at rear, indicating doors) */}
+      {/* Door split + liftgate */}
       <line
         x1={cargoEndX}
         y1={cargoY + 8}
@@ -176,8 +186,6 @@ function BoxTruckTopView({
         stroke="#272727"
         strokeWidth="0.5"
       />
-
-      {/* Liftgate (Penske 26ft has one) */}
       {truck.hasLiftgate && (
         <rect
           x={liftgateX}
@@ -190,30 +198,24 @@ function BoxTruckTopView({
         />
       )}
 
-      {/* Length dimension */}
       <DimensionLine
         x1={cargoStartX}
         x2={cargoEndX}
         y={dimY}
         label={`${truck.interiorLengthFt}' INTERIOR`}
       />
-
-      {/* Width dimension */}
       <WidthLabel
         x={cargoStartX - 12}
-        y={cargoY + cargoWidthPx / 2}
         label={`${truck.interiorWidthFt}'`}
-        side="left"
         cargoY={cargoY}
         cargoWidthPx={cargoWidthPx}
       />
 
-      {/* % label (top center over cargo box) */}
       <text
         x={(cargoStartX + cargoEndX) / 2}
         y={cargoY - 22}
         textAnchor="middle"
-        fill={color}
+        fill={overColor}
         fontSize="14"
         fontFamily="JetBrains Mono, monospace"
         fontWeight="700"
@@ -228,13 +230,11 @@ function BoxTruckTopView({
 
 function SemiTopView({
   truck,
+  load,
   fillPercent,
-  color,
-}: {
-  truck: TruckSpec;
-  fillPercent: number;
-  color: string;
-}) {
+  overColor,
+  vendorColors,
+}: ShapeProps) {
   const trailerLengthPx = truck.interiorLengthFt * PX_PER_FT;
   const trailerWidthPx = truck.interiorWidthFt * PX_PER_FT;
   const tractorLengthPx = 100;
@@ -244,14 +244,10 @@ function SemiTopView({
   const tractorX = 30;
   const trailerStartX = tractorX + tractorLengthPx + fifthWheelGapPx;
   const trailerEndX = trailerStartX + trailerLengthPx;
-
-  const fillWidth = Math.min(1, fillPercent) * trailerLengthPx;
   const dimY = trailerY + trailerWidthPx + 28;
 
   return (
     <>
-      {/* Tractor: cab + sleeper from above. Slightly wider than the trailer
-          to read distinctly. */}
       <path
         d={`M ${tractorX + 18} ${trailerY - 14}
             L ${tractorX + tractorLengthPx} ${trailerY - 14}
@@ -264,7 +260,6 @@ function SemiTopView({
         stroke="#9ca3af"
         strokeWidth="1.5"
       />
-      {/* Sleeper / cab divider */}
       <line
         x1={tractorX + 50}
         y1={trailerY - 12}
@@ -273,7 +268,6 @@ function SemiTopView({
         stroke="#9ca3af"
         strokeWidth="0.8"
       />
-      {/* Windshield */}
       <line
         x1={tractorX + 28}
         y1={trailerY - 8}
@@ -282,7 +276,6 @@ function SemiTopView({
         stroke="#272727"
         strokeWidth="1.5"
       />
-      {/* Headlights */}
       <circle cx={tractorX + 6} cy={trailerY + 8} r="2.5" fill="#ffa902" />
       <circle
         cx={tractorX + 6}
@@ -290,8 +283,6 @@ function SemiTopView({
         r="2.5"
         fill="#ffa902"
       />
-
-      {/* 5th wheel coupling (small connector indicator) */}
       <rect
         x={tractorX + tractorLengthPx}
         y={trailerY + trailerWidthPx / 2 - 8}
@@ -300,7 +291,7 @@ function SemiTopView({
         fill="#9ca3af"
       />
 
-      {/* Trailer outline + grid */}
+      {/* Trailer */}
       <rect
         x={trailerStartX}
         y={trailerY}
@@ -317,8 +308,6 @@ function SemiTopView({
         height={trailerWidthPx - 2}
         fill="url(#truck-grid)"
       />
-
-      {/* Centerline */}
       <line
         x1={trailerStartX}
         y1={trailerY + trailerWidthPx / 2}
@@ -329,20 +318,18 @@ function SemiTopView({
         strokeDasharray="4 4"
       />
 
-      {/* FILL */}
-      {fillPercent > 0 && (
-        <rect
-          x={trailerStartX + 1}
-          y={trailerY + 1}
-          width={Math.max(0, fillWidth - 2)}
-          height={trailerWidthPx - 2}
-          fill={color}
-          fillOpacity="0.6"
-          style={{ transition: "width 0.4s ease-out" }}
-        />
-      )}
+      {/* PACKED ITEMS */}
+      <PackedItems
+        load={load}
+        cargoStartX={trailerStartX}
+        cargoY={trailerY}
+        cargoWidthPx={trailerWidthPx}
+        truckLengthIn={truck.interiorLengthFt * 12}
+        truckWidthIn={truck.interiorWidthFt * 12}
+        cargoLengthPx={trailerLengthPx}
+        vendorColors={vendorColors}
+      />
 
-      {/* Tandem-axle markers (small dark rectangles near the rear of the trailer) */}
       <rect
         x={trailerEndX - 100}
         y={trailerY - 4}
@@ -357,8 +344,6 @@ function SemiTopView({
         height="3"
         fill="#272727"
       />
-
-      {/* Rear door split */}
       <line
         x1={trailerEndX}
         y1={trailerY + 8}
@@ -368,30 +353,24 @@ function SemiTopView({
         strokeWidth="0.5"
       />
 
-      {/* Length dimension */}
       <DimensionLine
         x1={trailerStartX}
         x2={trailerEndX}
         y={dimY}
         label={`${truck.interiorLengthFt}' INTERIOR`}
       />
-
-      {/* Width dimension */}
       <WidthLabel
         x={trailerStartX - 12}
-        y={trailerY + trailerWidthPx / 2}
         label={`${truck.interiorWidthFt}'`}
-        side="left"
         cargoY={trailerY}
         cargoWidthPx={trailerWidthPx}
       />
 
-      {/* % label */}
       <text
         x={(trailerStartX + trailerEndX) / 2}
         y={trailerY - 22}
         textAnchor="middle"
-        fill={color}
+        fill={overColor}
         fontSize="14"
         fontFamily="JetBrains Mono, monospace"
         fontWeight="700"
@@ -401,6 +380,117 @@ function SemiTopView({
     </>
   );
 }
+
+// ----- Packed items renderer ---------------------------------------------
+
+function PackedItems({
+  load,
+  cargoStartX,
+  cargoY,
+  cargoWidthPx,
+  cargoLengthPx,
+  truckLengthIn,
+  truckWidthIn,
+  vendorColors,
+}: {
+  load: LoadResult;
+  cargoStartX: number;
+  cargoY: number;
+  cargoWidthPx: number;
+  cargoLengthPx: number;
+  truckLengthIn: number;
+  truckWidthIn: number;
+  vendorColors: Map<string, string>;
+}) {
+  const lengthScale = cargoLengthPx / truckLengthIn;
+  const widthScale = cargoWidthPx / truckWidthIn;
+
+  return (
+    <g style={{ transition: "transform 0.4s ease-out" }}>
+      {load.shelves.map((shelf, si) => (
+        <ShelfGroup
+          key={si}
+          shelf={shelf}
+          cargoStartX={cargoStartX}
+          cargoY={cargoY}
+          lengthScale={lengthScale}
+          widthScale={widthScale}
+          vendorColors={vendorColors}
+        />
+      ))}
+    </g>
+  );
+}
+
+function ShelfGroup({
+  shelf,
+  cargoStartX,
+  cargoY,
+  lengthScale,
+  widthScale,
+  vendorColors,
+}: {
+  shelf: Shelf;
+  cargoStartX: number;
+  cargoY: number;
+  lengthScale: number;
+  widthScale: number;
+  vendorColors: Map<string, string>;
+}) {
+  // Group ground items by base index so we can label stacks.
+  const stackCounts = new Map<number, number>();
+  for (const stacked of shelf.stackedItems) {
+    if (stacked.baseGroundIndex === null) continue;
+    stackCounts.set(
+      stacked.baseGroundIndex,
+      (stackCounts.get(stacked.baseGroundIndex) ?? 0) + 1,
+    );
+  }
+
+  return (
+    <>
+      {shelf.groundItems.map((placed, gi) => {
+        const x = cargoStartX + shelf.startIn * lengthScale;
+        const y = cargoY + placed.xIn * widthScale;
+        const w = placed.item.depthIn * lengthScale;
+        const h = placed.item.widthIn * widthScale;
+        const color = vendorColors.get(placed.item.vendorId) ?? "#0e3e7a";
+        const stackedAbove = stackCounts.get(gi) ?? 0;
+
+        return (
+          <g key={gi}>
+            <rect
+              x={x}
+              y={y}
+              width={w}
+              height={h}
+              fill={color}
+              fillOpacity="0.55"
+              stroke={color}
+              strokeWidth="1"
+            />
+            {stackedAbove > 0 && w > 18 && h > 12 && (
+              <text
+                x={x + w / 2}
+                y={y + h / 2 + 3}
+                textAnchor="middle"
+                fontSize="9"
+                fontFamily="JetBrains Mono, monospace"
+                fontWeight="700"
+                fill="#ffffff"
+                style={{ pointerEvents: "none" }}
+              >
+                x{stackedAbove + 1}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </>
+  );
+}
+
+// ----- Dimension helpers -------------------------------------------------
 
 function DimensionLine({
   x1,
@@ -434,15 +524,12 @@ function DimensionLine({
 
 function WidthLabel({
   x,
-  y,
   label,
   cargoY,
   cargoWidthPx,
 }: {
   x: number;
-  y: number;
   label: string;
-  side: "left" | "right";
   cargoY: number;
   cargoWidthPx: number;
 }) {
@@ -467,7 +554,7 @@ function WidthLabel({
       />
       <text
         x={x - 6}
-        y={y + 3}
+        y={cargoY + cargoWidthPx / 2 + 3}
         textAnchor="end"
         fill="#5a6370"
         fontSize="9"
@@ -477,4 +564,27 @@ function WidthLabel({
       </text>
     </>
   );
+}
+
+// ----- Color palette helper (importable by callers) ----------------------
+
+export const VENDOR_COLOR_PALETTE = [
+  "#0e3e7a", // Apache navy
+  "#02aed6", // Apache cyan
+  "#16a34a", // green
+  "#ffa902", // amber
+  "#9333ea", // purple
+  "#0891b2", // teal
+  "#ea580c", // orange-deep
+  "#be185d", // pink
+] as const;
+
+export function buildVendorColorMap(
+  vendorIds: readonly string[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  vendorIds.forEach((id, i) => {
+    map.set(id, VENDOR_COLOR_PALETTE[i % VENDOR_COLOR_PALETTE.length]);
+  });
+  return map;
 }
