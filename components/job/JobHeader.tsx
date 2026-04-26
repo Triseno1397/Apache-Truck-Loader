@@ -3,13 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2 } from "lucide-react";
-import { TRUCK_PRESETS, type TruckPresetId } from "@/lib/trucks";
 import {
   deleteJobAction,
   updateJobAction,
 } from "@/app/(app)/jobs/[id]/actions";
 
-type JobTruckType = TruckPresetId | "custom";
 type JobStatus = "draft" | "confirmed" | "loaded" | "archived";
 
 type Props = {
@@ -17,7 +15,6 @@ type Props = {
   initialName: string;
   initialClient: string | null;
   initialEventDate: string | null;
-  initialTruckType: JobTruckType;
   initialStatus: JobStatus;
 };
 
@@ -28,14 +25,12 @@ export default function JobHeader({
   initialName,
   initialClient,
   initialEventDate,
-  initialTruckType,
   initialStatus,
 }: Props) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
   const [client, setClient] = useState(initialClient ?? "");
   const [eventDate, setEventDate] = useState(initialEventDate ?? "");
-  const [truckType, setTruckType] = useState<JobTruckType>(initialTruckType);
   const [status, setStatus] = useState<JobStatus>(initialStatus);
   const [saving, startSaving] = useTransition();
   const [savedFlash, setSavedFlash] = useState(false);
@@ -49,12 +44,6 @@ export default function JobHeader({
         router.refresh();
       }
     });
-  }
-
-  function commitTruck(next: JobTruckType) {
-    if (next === truckType) return;
-    setTruckType(next);
-    commit({ truck_type: next });
   }
 
   function commitStatus(next: JobStatus) {
@@ -124,7 +113,7 @@ export default function JobHeader({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="text-[10px] tracking-[0.2em] text-[#9ca3af] uppercase block mb-1">
             Client
@@ -165,33 +154,6 @@ export default function JobHeader({
               </option>
             ))}
           </select>
-        </div>
-      </div>
-
-      <div>
-        <label className="text-[10px] tracking-[0.2em] text-[#9ca3af] uppercase block mb-1.5">
-          Truck
-        </label>
-        <div className="flex bg-white border border-[#d1d5db] rounded overflow-hidden w-full sm:w-auto">
-          {(Object.entries(TRUCK_PRESETS) as Array<[TruckPresetId, (typeof TRUCK_PRESETS)[TruckPresetId]]>).map(
-            ([id, t]) => {
-              const active = truckType === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => commitTruck(id)}
-                  className={`flex-1 px-3 py-2 text-xs font-medium transition min-h-[40px] ${
-                    active
-                      ? "bg-[#0e3e7a] text-white"
-                      : "text-[#5a6370] hover:text-[#272727]"
-                  }`}
-                >
-                  {t.shortLabel}
-                </button>
-              );
-            },
-          )}
         </div>
       </div>
 

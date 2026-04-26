@@ -31,6 +31,10 @@ const TruckTypeEnum = z.enum(["26ft_penske", "53ft_semi", "custom"]);
 const StatusEnum = z.enum(["draft", "confirmed", "loaded", "archived"]);
 
 // ----- job updates -------------------------------------------------------
+//
+// truck_type, custom_truck_id and buffer_pct moved to public.job_trucks
+// in migration 0005. They're no longer fields on the job itself - one
+// job has N trucks, each with its own buffer.
 
 const JobUpdateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
@@ -40,10 +44,8 @@ const JobUpdateSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .nullable()
     .optional(),
-  truck_type: TruckTypeEnum.optional(),
   status: StatusEnum.optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
-  buffer_pct: z.number().int().min(0).max(100).optional(),
 });
 
 export async function updateJobAction(
@@ -68,23 +70,163 @@ export async function updateJobAction(
   return { ok: true };
 }
 
+// ----- job_trucks: add ---------------------------------------------------
+//
+// A job always has at least one truck (the migration backfilled one per
+// existing job and createJobAction creates one for new jobs). This adds
+// a second/third/Nth truck. New trucks default to 26ft Penske.
+
+export async function addJobTruckAction(
+  jobId: string,
+): Promise<{ ok: true; truckId: string } | { ok: false; error: string }> {
+  const supabase = createAdminClient();
+
+  // Pick the next sort_order so the new truck lands at the end of the list.
+  const { data: existing, error: listErr } = await supabase
+    .from("job_trucks")
+    .select("sort_order")
+    .eq("job_id", jobId)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+  if (listErr) return { ok: false, error: listErr.message };
+  const nextSort = (existing?.[0]?.sort_order ?? -1) + 1;
+
+  const { data, error } = await supabase
+    .from("job_trucks")
+    .insert({
+      job_id: jobId,
+      truck_type: "26ft_penske",
+      sort_order: nextSort,
+    })
+    .select("id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Failed to add truck" };
+  }
+
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", jobId);
+
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/jobs");
+  return { ok: true, truckId: data.id };
+}
+
+// ----- job_trucks: update ------------------------------------------------
+
+const JobTruckUpdateSchema = z
+  .object({
+    truck_type: TruckTypeEnum.optional(),
+    custom_truck_id: z.string().uuid().nullable().optional(),
+    label: z.string().trim().max(80).nullable().optional(),
+    buffer_pct: z.number().int().min(0).max(100).optional(),
+    sort_order: z.number().int().min(0).optional(),
+  })
+  // truck_type='custom' requires a custom_truck_id; the DB has the same
+  // check constraint, but failing fast here gives a nicer error.
+  .refine(
+    (v) =>
+      v.truck_type === undefined ||
+      v.truck_type !== "custom" ||
+      (v.custom_truck_id !== undefined && v.custom_truck_id !== null),
+    { message: "Custom truck requires a custom_truck_id" },
+  );
+
+export async function updateJobTruckAction(
+  jobTruckId: string,
+  patch: z.input<typeof JobTruckUpdateSchema>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = JobTruckUpdateSchema.safeParse(patch);
+  if (!parsed.success) return { ok: false, error: parsed.error.message };
+
+  const supabase = createAdminClient();
+
+  // When the truck_type flips away from 'custom' we must clear
+  // custom_truck_id to satisfy the DB check constraint - and vice versa,
+  // when flipping TO 'custom' the caller must supply a custom_truck_id.
+  const update: z.output<typeof JobTruckUpdateSchema> = { ...parsed.data };
+  if (update.truck_type !== undefined && update.truck_type !== "custom") {
+    update.custom_truck_id = null;
+  }
+
+  const { data, error } = await supabase
+    .from("job_trucks")
+    .update(update)
+    .eq("id", jobTruckId)
+    .select("job_id")
+    .single();
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Failed to update truck" };
+  }
+
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", data.job_id);
+
+  revalidatePath(`/jobs/${data.job_id}`);
+  revalidatePath("/jobs");
+  return { ok: true };
+}
+
+// ----- job_trucks: delete ------------------------------------------------
+//
+// Cascade-deletes every vendor on this truck (FK on delete cascade). The
+// UI surfaces a confirmation that names the vendor count. We block the
+// last truck on a job - a job must always have at least one.
+
+export async function deleteJobTruckAction(formData: FormData): Promise<never> {
+  const jobTruckId = String(formData.get("jobTruckId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobTruckId || !jobId) throw new Error("Missing ids");
+
+  const supabase = createAdminClient();
+
+  const { count, error: countErr } = await supabase
+    .from("job_trucks")
+    .select("*", { count: "exact", head: true })
+    .eq("job_id", jobId);
+  if (countErr) throw new Error(countErr.message);
+  if ((count ?? 0) <= 1) {
+    throw new Error("A job must have at least one truck");
+  }
+
+  const { error } = await supabase
+    .from("job_trucks")
+    .delete()
+    .eq("id", jobTruckId);
+  if (error) throw new Error(error.message);
+
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", jobId);
+
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/jobs");
+  redirect(`/jobs/${jobId}`);
+}
+
 // ----- vendor: create (eager, empty) ------------------------------------
 //
 // Auto-save model: clicking "Add vendor" inserts a placeholder row right
-// away and drops the user into the edit form for that row. Subsequent
-// edits are auto-saved by updateVendorAction. If they navigate away
-// without typing anything, the row stays as "Untitled vendor" with 0/0
-// numbers - they can delete it from the list.
+// away and drops the user into the edit form for that row. The vendor is
+// pinned to a specific truck via jobTruckId (the active tab when the
+// button was clicked).
 
 export async function createVendorAction(formData: FormData): Promise<never> {
   const jobId = String(formData.get("jobId") ?? "");
-  if (!jobId) throw new Error("Missing jobId");
+  const jobTruckId = String(formData.get("jobTruckId") ?? "");
+  if (!jobId || !jobTruckId) throw new Error("Missing jobId or jobTruckId");
 
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("vendors")
     .insert({
       job_id: jobId,
+      job_truck_id: jobTruckId,
       name: "Untitled vendor",
       input_method: "linear",
       input_data: {} as Json,
@@ -100,7 +242,55 @@ export async function createVendorAction(formData: FormData): Promise<never> {
 
   revalidatePath(`/jobs/${jobId}`);
   revalidatePath("/jobs");
-  redirect(`/jobs/${jobId}?edit=${data.id}`);
+  redirect(`/jobs/${jobId}?truck=${jobTruckId}&edit=${data.id}`);
+}
+
+// ----- vendor: move to a different truck --------------------------------
+//
+// Reassigns a vendor to a different truck on the same job. Used by the
+// per-row "move to truck" affordance.
+
+export async function moveVendorToTruckAction(
+  vendorId: string,
+  newJobTruckId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!vendorId || !newJobTruckId) {
+    return { ok: false, error: "Missing ids" };
+  }
+
+  const supabase = createAdminClient();
+
+  // Cheap safety: confirm the destination truck belongs to the same job
+  // as the vendor. Prevents accidental cross-job moves from a stale UI.
+  const [{ data: vendor }, { data: truck }] = await Promise.all([
+    supabase.from("vendors").select("job_id").eq("id", vendorId).single(),
+    supabase
+      .from("job_trucks")
+      .select("job_id")
+      .eq("id", newJobTruckId)
+      .single(),
+  ]);
+  if (!vendor || !truck) {
+    return { ok: false, error: "Vendor or truck not found" };
+  }
+  if (vendor.job_id !== truck.job_id) {
+    return { ok: false, error: "Truck belongs to a different job" };
+  }
+
+  const { error } = await supabase
+    .from("vendors")
+    .update({ job_truck_id: newJobTruckId })
+    .eq("id", vendorId);
+  if (error) return { ok: false, error: error.message };
+
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", vendor.job_id);
+
+  revalidatePath(`/jobs/${vendor.job_id}`);
+  revalidatePath("/jobs");
+  return { ok: true };
 }
 
 // ----- vendor: update (auto-save) ---------------------------------------

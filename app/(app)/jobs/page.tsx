@@ -39,11 +39,39 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+type TruckSummary = { type: "26ft_penske" | "53ft_semi" | "custom" };
+
+// Compact label for the job card. "26ft Box x2" when all the same type;
+// otherwise list each ("26ft Box + 53ft Semi"). For 3+ mixed, fall back
+// to a count.
+function summarizeTrucks(trucks: TruckSummary[]): string {
+  if (trucks.length === 0) return "NO TRUCK";
+  const counts = new Map<string, number>();
+  for (const t of trucks) {
+    counts.set(t.type, (counts.get(t.type) ?? 0) + 1);
+  }
+  const labelOf = (type: string) =>
+    type === "custom"
+      ? "CUSTOM"
+      : (TRUCK_PRESETS[type as "26ft_penske" | "53ft_semi"]?.shortLabel.toUpperCase() ?? "TRUCK");
+
+  if (counts.size === 1) {
+    const [type, n] = [...counts.entries()][0];
+    return n > 1 ? `${labelOf(type)} ×${n}` : labelOf(type);
+  }
+  if (trucks.length <= 3) {
+    return [...counts.entries()]
+      .map(([type, n]) => (n > 1 ? `${labelOf(type)}×${n}` : labelOf(type)))
+      .join(" + ");
+  }
+  return `${trucks.length} TRUCKS`;
+}
+
 export default async function JobsPage() {
   const supabase = createAdminClient();
   const { data: jobs, error } = await supabase
     .from("jobs")
-    .select("id, name, client, event_date, status, truck_type, updated_at")
+    .select("id, name, client, event_date, status, updated_at")
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -54,6 +82,23 @@ export default async function JobsPage() {
         </div>
       </div>
     );
+  }
+
+  // Fetch trucks for every visible job in one round-trip so the list page
+  // stays a single roundtrip per render.
+  const jobIds = (jobs ?? []).map((j) => j.id);
+  const trucksByJob = new Map<string, TruckSummary[]>();
+  if (jobIds.length > 0) {
+    const { data: truckRows } = await supabase
+      .from("job_trucks")
+      .select("job_id, truck_type, sort_order")
+      .in("job_id", jobIds)
+      .order("sort_order", { ascending: true });
+    for (const row of truckRows ?? []) {
+      const arr = trucksByJob.get(row.job_id) ?? [];
+      arr.push({ type: row.truck_type as TruckSummary["type"] });
+      trucksByJob.set(row.job_id, arr);
+    }
   }
 
   return (
@@ -81,10 +126,7 @@ export default async function JobsPage() {
       {jobs && jobs.length > 0 ? (
         <div className="space-y-2">
           {jobs.map((job) => {
-            const truck =
-              job.truck_type === "custom"
-                ? null
-                : TRUCK_PRESETS[job.truck_type as "26ft_penske" | "53ft_semi"];
+            const truckLabel = summarizeTrucks(trucksByJob.get(job.id) ?? []);
             const statusKey = job.status ?? "draft";
             return (
               <Link
@@ -106,7 +148,7 @@ export default async function JobsPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[#5a6370] mono tracking-wide">
                       {job.client && <span>{job.client}</span>}
-                      <span>{truck?.shortLabel ?? "CUSTOM"}</span>
+                      <span>{truckLabel}</span>
                       <span>{formatDate(job.event_date)}</span>
                     </div>
                   </div>

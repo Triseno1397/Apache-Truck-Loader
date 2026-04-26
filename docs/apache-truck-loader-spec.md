@@ -112,28 +112,40 @@ Managed by Supabase Auth. Extended with:
 - `name` text (e.g., "Coachella Mainstage - Friday load")
 - `client` text (optional - for searching past loads by client)
 - `event_date` date (optional)
-- `truck_type` enum: `26ft_penske`, `53ft_semi`, `custom`
-- `custom_truck_id` uuid FK -> custom_trucks (nullable, used when truck_type = 'custom')
 - `status` enum: `draft`, `confirmed`, `loaded`, `archived`
-- `buffer_pct` int (default 10) - safety margin added to capacity calcs
 - `notes` text
 - `created_by` uuid FK -> users
 - `created_at` timestamptz
 - `updated_at` timestamptz
 - Indexes on `org_id`, `client`, `event_date DESC`, `updated_at DESC`
+- **Truck choice and buffer live on `job_trucks`** (one job has N trucks).
+
+#### `job_trucks`  (multi-truck per job)
+- `id` uuid PK
+- `job_id` uuid FK -> jobs (cascade delete)
+- `truck_type` enum: `26ft_penske`, `53ft_semi`, `custom`
+- `custom_truck_id` uuid FK -> custom_trucks (nullable, used when truck_type = 'custom')
+- `label` text (optional, e.g., "Truck A", "Stage gear")
+- `buffer_pct` int (default 10) - per-truck safety margin
+- `sort_order` int (drives tab order in the editor)
+- `created_at` timestamptz
+- One row per truck on a job. A job always has at least one truck (the
+  delete action blocks removing the last one).
 
 #### `vendors`
 - `id` uuid PK
 - `job_id` uuid FK -> jobs (cascade delete)
+- `job_truck_id` uuid FK -> job_trucks (cascade delete) - which truck on this job the vendor's gear is on
 - `name` text
 - `input_method` enum: `linear`, `dimensions`, `pieces`, `cubic`, `footprint`, `pallets`, `image`
 - `input_data` jsonb - method-specific payload (see prototype for shape)
 - `stackable` boolean (nullable - null means "use default for this method")
+- `can_be_base` boolean (nullable - "other gear can be stacked on top of this", null = use case preset default)
 - `weight_lb_override` numeric (nullable - overrides computed)
 - `notes` text
 - `sort_order` int (for future load-order Phase 2 feature)
 - `created_at` timestamptz
-- Index on `job_id`
+- Indexes on `job_id` and `job_truck_id`
 
 #### `custom_trucks`
 - `id` uuid PK
@@ -224,7 +236,13 @@ linearFt = rows * (item_depth_in / 12)
 
 ### Buffer percentage
 
-Jobs have a `buffer_pct` (default 10%). Applied capacity = `truck.cargoLength * (1 - bufferPct/100)`. This accounts for cable ramps, gaff tape kits, misc gear, and crew tie-down space that never makes it onto the load sheet. Display as "effective capacity" alongside raw capacity.
+Each truck on a job has its own `buffer_pct` (default 10%, lives on
+`job_trucks` rather than `jobs` so a tight stage-gear truck can run a
+different margin from a more flexible stack-everything truck). Applied
+capacity = `truck.cargoLength * (1 - bufferPct/100)`. This accounts for
+cable ramps, gaff tape kits, misc gear, and crew tie-down space that
+never makes it onto the load sheet. Display as "effective capacity"
+alongside raw capacity.
 
 ### Auto-save debounced writes
 
@@ -281,10 +299,22 @@ Same fundamental layout as the prototype, upgraded with:
 - Status dropdown (Draft -> Confirmed -> Loaded -> Archived)
 - Notes field (collapsible)
 
-**Truck selector:**
-- Tabs: 26ft Penske / 53ft Semi / + Custom Truck
-- Tapping "+ Custom Truck" opens modal to add/select org-specific truck
-- Can change truck mid-load; all vendor math recomputes instantly
+**Trucks on a job (multi-truck):**
+- A row of tabs - one per truck on the job. Each tab shows the truck's
+  short label (e.g., "Truck A"), its type (26ft Box / 53ft Semi), and
+  its current fill % with a color-coded indicator.
+- "+ Add truck" button at the end of the tab strip adds another truck
+  (defaults to 26ft Penske; user can flip the type after).
+- The active tab shows a "Truck Settings" bar with:
+  - Name (label) input
+  - Truck-type segmented control (26ft / 53ft / Custom)
+  - Buffer slider (0-30%, per-truck)
+  - "Remove this truck" action - cascades to the truck's vendors with
+    a confirm. Hidden when the job has only one truck.
+- Vendor list, capacity bars, and the truck visualization below the
+  tabs all reflect the **active truck only**. Use the tabs to switch.
+- A roll-up summary above the tabs shows total length / weight across
+  all trucks plus a warning if any single truck is over capacity.
 
 **Truck visualization:**
 - Side-view SVG (from prototype), full-width on mobile
@@ -298,9 +328,11 @@ Same fundamental layout as the prototype, upgraded with:
 - Buffer indicator (shows effective capacity line)
 - Over-capacity warnings in red with specific overage amount
 
-**Vendor list:**
+**Vendor list (per active truck):**
 - Cards/rows with vendor name, input method icon, linear ft, weight, stack badge
 - Tap to expand inline edit (mobile) or open side panel (desktop)
+- "Move to truck" affordance (visible when the job has more than one
+  truck) reassigns a vendor to a different truck on the same job.
 - Drag to reorder (becomes load-order in Phase 2)
 - Quick-add button floating at bottom on mobile, inline button on desktop
 
@@ -375,8 +407,11 @@ These were added during build, not in the original spec, but are in
 scope for v1:
 
 - **Multi-truck per job.** Originally Phase 2 ("split loads"), pulled
-  forward: a single job can have N trucks, each independently packed.
-  Crew often loads two 26ft Penskes for one event.
+  forward and **built**: a single job has N trucks (`job_trucks`
+  table), each independently packed and shown in its own tab. Crew
+  often loads two 26ft Penskes for one event. Vendors are pinned to a
+  specific truck (`vendors.job_truck_id`) and can be reassigned from
+  the vendor row.
 - **Drag-and-drop on the truck render.** Manually rearrange item
   rectangles inside the cargo box if you want to override the auto
   packer (Tetris mode). Persisted manual placements override the

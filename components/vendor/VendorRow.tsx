@@ -16,6 +16,7 @@ import {
 } from "@/lib/packing";
 import { INPUT_METHOD_LABELS, type InputMethod } from "@/lib/vendor-input";
 import { deleteVendorAction } from "@/app/(app)/jobs/[id]/actions";
+import MoveVendorMenu from "@/components/vendor/MoveVendorMenu";
 
 const ICON_BY_METHOD: Record<InputMethod, typeof Package> = {
   linear: Ruler,
@@ -36,6 +37,9 @@ type Props = {
   hydrated: VendorInput | null;
   weightOverride: number | null;
   truck: TruckCrossSection;
+  // Other trucks on this job the user can reassign this vendor TO. Empty
+  // when the job has only one truck (which hides the move affordance).
+  otherTrucks: ReadonlyArray<{ id: string; label: string }>;
 };
 
 export default function VendorRow({
@@ -47,6 +51,7 @@ export default function VendorRow({
   hydrated,
   weightOverride,
   truck,
+  otherTrucks,
 }: Props) {
   const Icon = ICON_BY_METHOD[inputMethod];
   const packing = hydrated
@@ -116,6 +121,7 @@ export default function VendorRow({
             >
               <FileText size={14} />
             </Link>
+            <MoveVendorMenu vendorId={vendorId} otherTrucks={otherTrucks} />
             <form action={deleteVendorAction} className="inline">
               <input type="hidden" name="vendorId" value={vendorId} />
               <input type="hidden" name="jobId" value={jobId} />

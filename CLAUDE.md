@@ -122,6 +122,19 @@ Test every feature on an actual phone viewport before considering it done.
 
 The smart 3D packing logic (width-aware pairing + height-aware stacking) is what makes this tool valuable. Do not simplify it. Do not replace it with cubic-feet-divided-by-64. See spec for the algorithm. All the logic lives in `lib/packing.ts` - everything else consumes it.
 
+## Multi-truck data model
+
+A job has N trucks via `public.job_trucks` (one row per truck). Vendors
+are pinned to a specific truck via `vendors.job_truck_id`. Each truck
+holds its own `truck_type`, `custom_truck_id`, `label`, `buffer_pct`,
+and `sort_order` - those fields no longer exist on `jobs`. Each truck
+packs **independently** (one `packVendors` call per truck with its own
+`truckCrossSection`); roll-up totals sum across trucks. The editor uses
+the `?truck=<id>` query param to track the active tab; default is the
+first truck by `sort_order`. A job must always have at least one truck
+(`createJobAction` seeds one and `deleteJobTruckAction` blocks the
+last).
+
 ## TypeScript rules
 
 - `strict: true` in tsconfig

@@ -364,6 +364,71 @@ describe("packLoad - cross-vendor sharing pays off", () => {
   });
 });
 
+describe("multi-truck per job - independent packing", () => {
+  // The data model splits vendors across N trucks; each truck packs
+  // independently with its own truckCrossSection. Totals roll up by
+  // summing per-truck LoadResult fields. These tests guard the contract.
+  it("splitting vendors across two trucks packs each independently and sums clean", () => {
+    // Together on ONE truck: 3 pallets + 2 Pelican 1620s -> 96in (the
+    // pelicans share row 2 with the 3rd pallet, no new row opened).
+    const oneTruck = packVendors(
+      [
+        { id: "p", vendorInput: PALLET_INPUT(3), weightOverride: null, canBeBase: false },
+        {
+          id: "k",
+          vendorInput: { ...PELICAN_1620, quantity: 2, stackable: false },
+          weightOverride: null,
+        },
+      ],
+      TRUCK_26,
+    );
+    expect(oneTruck.totalLengthIn).toBe(96);
+
+    // Split across two trucks: pallets on truck A, pelicans on truck B.
+    // - Truck A: 3 pallets only -> 96in (2 rows: 2 pallets + 1 pallet)
+    // - Truck B: 2 pelicans only -> 28in (1 row, 4 across capacity)
+    // Roll-up: 96 + 28 = 124in. The penalty for splitting is the
+    // 28in that previously shared a row on the single truck.
+    const truckA = packVendors(
+      [{ id: "p", vendorInput: PALLET_INPUT(3), weightOverride: null }],
+      TRUCK_26,
+    );
+    const truckB = packVendors(
+      [
+        {
+          id: "k",
+          vendorInput: { ...PELICAN_1620, quantity: 2, stackable: false },
+          weightOverride: null,
+        },
+      ],
+      TRUCK_26,
+    );
+    expect(truckA.totalLengthIn).toBe(96);
+    expect(truckB.totalLengthIn).toBe(28);
+    expect(truckA.totalLengthIn + truckB.totalLengthIn).toBe(124);
+  });
+
+  it("a truck with no vendors packs to a zero-length, no-shelf load", () => {
+    const empty = packVendors([], TRUCK_26);
+    expect(empty.shelves).toHaveLength(0);
+    expect(empty.totalLengthIn).toBe(0);
+    expect(empty.totalWeightLb).toBe(0);
+    expect(empty.unplaced).toHaveLength(0);
+  });
+
+  it("weight rolls up across trucks", () => {
+    const a = packVendors(
+      [{ id: "p", vendorInput: PALLET_INPUT(2), weightOverride: 1000 }],
+      TRUCK_26,
+    );
+    const b = packVendors(
+      [{ id: "k", vendorInput: { ...PELICAN_1620, quantity: 4 }, weightOverride: null }],
+      TRUCK_26,
+    );
+    expect(a.totalWeightLb + b.totalWeightLb).toBe(1000 + 4 * 30);
+  });
+});
+
 describe("packLoad - edge cases", () => {
   it("item wider than truck is unplaced", () => {
     const items: PackableItem[] = [

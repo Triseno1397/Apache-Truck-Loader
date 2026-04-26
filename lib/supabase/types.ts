@@ -139,45 +139,36 @@ export type Database = {
       }
       jobs: {
         Row: {
-          buffer_pct: number
           client: string | null
           created_at: string
           created_by: string | null
-          custom_truck_id: string | null
           event_date: string | null
           id: string
           name: string
           notes: string | null
           status: Database["public"]["Enums"]["job_status"]
-          truck_type: Database["public"]["Enums"]["truck_type"]
           updated_at: string
         }
         Insert: {
-          buffer_pct?: number
           client?: string | null
           created_at?: string
           created_by?: string | null
-          custom_truck_id?: string | null
           event_date?: string | null
           id?: string
           name: string
           notes?: string | null
           status?: Database["public"]["Enums"]["job_status"]
-          truck_type?: Database["public"]["Enums"]["truck_type"]
           updated_at?: string
         }
         Update: {
-          buffer_pct?: number
           client?: string | null
           created_at?: string
           created_by?: string | null
-          custom_truck_id?: string | null
           event_date?: string | null
           id?: string
           name?: string
           notes?: string | null
           status?: Database["public"]["Enums"]["job_status"]
-          truck_type?: Database["public"]["Enums"]["truck_type"]
           updated_at?: string
         }
         Relationships: [
@@ -188,8 +179,49 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      job_trucks: {
+        Row: {
+          buffer_pct: number
+          created_at: string
+          custom_truck_id: string | null
+          id: string
+          job_id: string
+          label: string | null
+          sort_order: number
+          truck_type: Database["public"]["Enums"]["truck_type"]
+        }
+        Insert: {
+          buffer_pct?: number
+          created_at?: string
+          custom_truck_id?: string | null
+          id?: string
+          job_id: string
+          label?: string | null
+          sort_order?: number
+          truck_type?: Database["public"]["Enums"]["truck_type"]
+        }
+        Update: {
+          buffer_pct?: number
+          created_at?: string
+          custom_truck_id?: string | null
+          id?: string
+          job_id?: string
+          label?: string | null
+          sort_order?: number
+          truck_type?: Database["public"]["Enums"]["truck_type"]
+        }
+        Relationships: [
           {
-            foreignKeyName: "jobs_custom_truck_id_fkey"
+            foreignKeyName: "job_trucks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_trucks_custom_truck_id_fkey"
             columns: ["custom_truck_id"]
             isOneToOne: false
             referencedRelation: "custom_trucks"
@@ -273,6 +305,7 @@ export type Database = {
           input_data: Json
           input_method: Database["public"]["Enums"]["input_method"]
           job_id: string
+          job_truck_id: string
           name: string
           notes: string | null
           sort_order: number
@@ -286,6 +319,7 @@ export type Database = {
           input_data?: Json
           input_method: Database["public"]["Enums"]["input_method"]
           job_id: string
+          job_truck_id: string
           name: string
           notes?: string | null
           sort_order?: number
@@ -299,6 +333,7 @@ export type Database = {
           input_data?: Json
           input_method?: Database["public"]["Enums"]["input_method"]
           job_id?: string
+          job_truck_id?: string
           name?: string
           notes?: string | null
           sort_order?: number
@@ -311,6 +346,13 @@ export type Database = {
             columns: ["job_id"]
             isOneToOne: false
             referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vendors_job_truck_id_fkey"
+            columns: ["job_truck_id"]
+            isOneToOne: false
+            referencedRelation: "job_trucks"
             referencedColumns: ["id"]
           },
         ]
