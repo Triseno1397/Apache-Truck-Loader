@@ -14,6 +14,7 @@ import {
   type InputMethod,
 } from "@/lib/vendor-input";
 import JobHeader from "@/components/job/JobHeader";
+import TruckSVG from "@/components/truck/TruckSVG";
 import VendorRow from "@/components/vendor/VendorRow";
 import VendorForm from "@/components/vendor/VendorForm";
 
@@ -140,6 +141,13 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
               OVER CAPACITY
             </div>
           )}
+        </div>
+
+        {/* Top-view truck visualization (step 6). Fill grows from the cab
+            end toward the rear as gear is added - matches how loads are
+            actually built (heaviest against the cab wall first). */}
+        <div className="px-3 sm:px-5 py-3 bg-white border-b border-[#e6e8eb]">
+          <TruckSVG truck={truckForMath} fillPercent={lengthPct} />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#e6e8eb]">
