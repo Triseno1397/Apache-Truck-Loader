@@ -7,7 +7,7 @@
 // Semi (53ft): tractor + 5th-wheel gap + trailer.
 
 import type { TruckSpec } from "@/lib/trucks";
-import type { LoadResult, Shelf } from "@/lib/load-packer";
+import type { LoadResult, PlacedItem, Shelf } from "@/lib/load-packer";
 
 type Props = {
   truck: TruckSpec;
@@ -455,14 +455,16 @@ function ShelfGroup({
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
 }) {
-  // Group ground items by base index so we can label stacks.
-  const stackCounts = new Map<number, number>();
+  // Group every stacked item by the base ground index it sits on.
+  // We don't just count - we keep the actual items so we can paint a
+  // segmented color stripe across the top of each base showing what
+  // (and from which vendor) is stacked there.
+  const stackedByBase = new Map<number, PlacedItem[]>();
   for (const stacked of shelf.stackedItems) {
     if (stacked.baseGroundIndex === null) continue;
-    stackCounts.set(
-      stacked.baseGroundIndex,
-      (stackCounts.get(stacked.baseGroundIndex) ?? 0) + 1,
-    );
+    const list = stackedByBase.get(stacked.baseGroundIndex) ?? [];
+    list.push(stacked);
+    stackedByBase.set(stacked.baseGroundIndex, list);
   }
 
   return (
@@ -472,8 +474,9 @@ function ShelfGroup({
         const y = cargoY + placed.xIn * widthScale;
         const w = placed.item.depthIn * lengthScale;
         const h = placed.item.widthIn * widthScale;
-        const color = vendorColors.get(placed.item.vendorId) ?? "#0e3e7a";
-        const stackedAbove = stackCounts.get(gi) ?? 0;
+        const baseColor = vendorColors.get(placed.item.vendorId) ?? "#0e3e7a";
+        const stackedItems = stackedByBase.get(gi) ?? [];
+        const stackedCount = stackedItems.length;
         const rawName = vendorNames.get(placed.item.vendorId) ?? "";
         // Truncate vendor name to fit the rect's width. ~7 px per char at
         // size 8, so floor(w / 7) is a safe upper bound. Drop the name
@@ -484,7 +487,15 @@ function ShelfGroup({
           rawName.length > maxChars
             ? rawName.slice(0, Math.max(0, maxChars - 1)) + "..."
             : rawName;
-        const showStack = stackedAbove > 0 && w > 18 && h > 12;
+
+        // Stacked-on-top stripe lives along the top edge of the base
+        // rectangle. One segment per stacked item, colored by the
+        // stacked item's vendor. Communicates "N items stacked, from
+        // these vendors" at a glance - replaces the old ambiguous "x2".
+        const stripeHeight = Math.min(5, Math.max(3, h * 0.18));
+        const showStripe = stackedCount > 0 && w > 16 && h > 10;
+        const segmentW = showStripe ? w / stackedCount : 0;
+        const showCount = stackedCount > 0 && w > 22 && h > 14;
 
         return (
           <g key={gi}>
@@ -493,16 +504,16 @@ function ShelfGroup({
               y={y}
               width={w}
               height={h}
-              fill={color}
+              fill={baseColor}
               fillOpacity="0.55"
-              stroke={color}
+              stroke={baseColor}
               strokeWidth="1"
             />
             {/* Vendor name label - small black ink, top-left of the rect */}
             {showName && (
               <text
                 x={x + 3}
-                y={y + 10}
+                y={y + 10 + (showStripe ? stripeHeight : 0)}
                 fontSize="8"
                 fontFamily="JetBrains Mono, monospace"
                 fill="#272727"
@@ -511,18 +522,41 @@ function ShelfGroup({
                 {displayName}
               </text>
             )}
-            {showStack && (
+
+            {/* Stacked-on-top stripe: per-vendor color segments */}
+            {showStripe &&
+              stackedItems.map((stk, i) => {
+                const segColor =
+                  vendorColors.get(stk.item.vendorId) ?? "#5a6370";
+                return (
+                  <rect
+                    key={i}
+                    x={x + i * segmentW}
+                    y={y}
+                    width={segmentW}
+                    height={stripeHeight}
+                    fill={segColor}
+                    stroke="#272727"
+                    strokeWidth="0.4"
+                  />
+                );
+              })}
+
+            {/* "+N" badge in the bottom-right corner: how many things sit
+                ON TOP of this base. Distinct from a quantity label - it
+                does NOT count the base itself. */}
+            {showCount && (
               <text
-                x={x + w / 2}
-                y={y + h / 2 + 4}
-                textAnchor="middle"
+                x={x + w - 3}
+                y={y + h - 3}
+                textAnchor="end"
                 fontSize="9"
                 fontFamily="JetBrains Mono, monospace"
                 fontWeight="700"
-                fill="#ffffff"
+                fill="#272727"
                 style={{ pointerEvents: "none" }}
               >
-                x{stackedAbove + 1}
+                +{stackedCount}
               </text>
             )}
           </g>

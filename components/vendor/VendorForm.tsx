@@ -203,6 +203,11 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
 
     if (result.ok) {
       setStatus("saved");
+      // Re-render the parent server tree so the truck SVG, capacity bars,
+      // tab fill %, and roll-up totals all reflect the change while the
+      // user is still inside the form. router.refresh() doesn't unmount
+      // client components, so this form keeps its state and focus.
+      router.refresh();
       setTimeout(() => {
         if (myId === saveIdRef.current) setStatus("idle");
       }, 1500);
