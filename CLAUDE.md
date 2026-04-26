@@ -49,14 +49,54 @@ back on top: re-add Supabase Auth, populate `created_by`, gate by
 
 ## Aesthetic absolutes
 
-- **Dark only.** No light mode. Background `#0a0b0d`.
-- **Cyan accent `#00d4ff`** is the Apache / Blackmagic signature color. Use sparingly - it's an accent, not a fill.
-- **No rounded-xl, no shadows, no gradients on UI chrome.** Hairline borders (`#1f2328` to `#3a4049`), `rounded` or `rounded-md` max.
-- **Numerics use JetBrains Mono with `tabular-nums`.** Always. A capacity readout that jitters because digits have different widths is broken.
-- **Typography tracking.** UPPERCASE labels get `tracking-[0.15em]` to `tracking-[0.2em]`. Tight.
-- **Motion is restrained.** 150ms transitions on hover, 400-500ms on capacity fills. No bouncy springs. No scroll-triggered reveal animations on core UI.
+Brand-matched to apacherentalgroup.com. Color palette pulled from
+the marketing site itself, not invented. Light mode by client choice.
 
-If a design decision feels ambiguous, reference: Blackmagic DaVinci Resolve control surfaces, Linear app, Vercel dashboard. If it looks like it belongs in a generic SaaS template, it's wrong.
+- **Light only.** Background `#ffffff`. No dark mode toggle.
+- **Apache navy `#0e3e7a`** is the primary accent (buttons, focus
+  rings, the logo square, active state borders). Use sparingly -
+  it's an accent, not a fill.
+- **Apache bright blue `#02aed6`** is the hover/secondary accent
+  (button hover state, link hover, lighter emphasis).
+- **Apache orange `#ffa902` / `#ff7302`** for capacity warnings
+  (>75% full, >95% full). Real risk. Don't reach for it casually.
+- **No rounded-xl, no shadows, no gradients on UI chrome.** Hairline
+  borders (`#e6e8eb` subtle / `#d1d5db` default / `#9ca3af` strong),
+  `rounded` or `rounded-md` max.
+- **Numerics use JetBrains Mono with `tabular-nums`.** Always. A
+  capacity readout that jitters because digits have different widths
+  is broken.
+- **Typography tracking.** UPPERCASE labels get `tracking-[0.15em]`
+  to `tracking-[0.2em]`. Tight.
+- **Motion is restrained.** 150ms transitions on hover, 400-500ms on
+  capacity fills. No bouncy springs. No scroll-triggered reveal
+  animations on core UI.
+
+If a design decision feels ambiguous, reference apacherentalgroup.com
+itself, or Linear / Vercel dashboard light mode. If it looks like it
+belongs in a generic SaaS template, it's wrong.
+
+### Full color tokens (in `app/globals.css`)
+
+| Token | Hex | Use |
+|---|---|---|
+| `--color-bg` | `#ffffff` | page background |
+| `--color-panel` | `#f8f9fa` | card backgrounds |
+| `--color-panel-raised` | `#eff1f4` | elevated surfaces |
+| `--color-border-subtle` | `#e6e8eb` | hairline dividers |
+| `--color-border` | `#d1d5db` | default borders |
+| `--color-border-strong` | `#9ca3af` | emphasized borders |
+| `--color-fg` | `#272727` | primary text |
+| `--color-fg-muted` | `#5a6370` | secondary text |
+| `--color-fg-subtle` | `#9ca3af` | tertiary text / placeholders |
+| `--color-accent` | `#0e3e7a` | Apache navy - buttons, focus, accent |
+| `--color-success` | `#16a34a` | "fits with room" status |
+| `--color-warning` | `#ffa902` | tight load warning |
+| `--color-warning-strong` | `#ff7302` | very tight warning |
+| `--color-danger` | `#dc2626` | over capacity, errors |
+
+Hover for the navy accent uses `#02aed6` (Apache bright blue). Not
+in `@theme` because it's only used as `hover:bg-[#02aed6]`.
 
 ## Mobile is not a subset
 

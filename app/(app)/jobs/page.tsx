@@ -12,10 +12,10 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  draft: "text-[#8a9199] border-[#2a2f36]",
-  confirmed: "text-[#00d4ff] border-[#00d4ff]/30",
-  loaded: "text-[#00e084] border-[#00e084]/30",
-  archived: "text-[#4a5058] border-[#1f2328]",
+  draft: "text-[#5a6370] border-[#d1d5db]",
+  confirmed: "text-[#0e3e7a] border-[#0e3e7a]/30",
+  loaded: "text-[#16a34a] border-[#16a34a]/30",
+  archived: "text-[#9ca3af] border-[#e6e8eb]",
 };
 
 function formatDate(date: string | null): string {
@@ -49,7 +49,7 @@ export default async function JobsPage() {
   if (error) {
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        <div className="border border-[#ff4757]/30 bg-[#ff4757]/10 text-[#ff4757] rounded-md p-4 text-sm">
+        <div className="border border-[#dc2626]/30 bg-[#dc2626]/10 text-[#dc2626] rounded-md p-4 text-sm">
           Could not load jobs: {error.message}
         </div>
       </div>
@@ -63,14 +63,14 @@ export default async function JobsPage() {
           <h1 className="text-base sm:text-lg font-semibold tracking-tight">
             Jobs
           </h1>
-          <div className="text-[10px] text-[#4a5058] mono tracking-wider">
+          <div className="text-[10px] text-[#9ca3af] mono tracking-wider">
             {(jobs?.length ?? 0).toString().padStart(2, "0")} TOTAL
           </div>
         </div>
         <form action={createJobAction}>
           <button
             type="submit"
-            className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#00d4ff] text-[#0a0b0d] font-semibold px-3 py-2 rounded hover:bg-[#33dcff] transition min-h-[40px]"
+            className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#0e3e7a] text-[#ffffff] font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition min-h-[40px]"
           >
             <Plus size={14} />
             New job
@@ -90,12 +90,12 @@ export default async function JobsPage() {
               <Link
                 key={job.id}
                 href={`/jobs/${job.id}`}
-                className="block bg-[#0f1115] border border-[#1f2328] rounded-md p-3 sm:p-4 hover:border-[#2a2f36] transition group"
+                className="block bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 sm:p-4 hover:border-[#d1d5db] transition group"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2 mb-1">
-                      <div className="text-sm font-semibold text-[#e8eaed] truncate">
+                      <div className="text-sm font-semibold text-[#272727] truncate">
                         {job.name}
                       </div>
                       <span
@@ -104,13 +104,13 @@ export default async function JobsPage() {
                         {STATUS_LABELS[statusKey]}
                       </span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[#8a9199] mono tracking-wide">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[#5a6370] mono tracking-wide">
                       {job.client && <span>{job.client}</span>}
                       <span>{truck?.shortLabel ?? "CUSTOM"}</span>
                       <span>{formatDate(job.event_date)}</span>
                     </div>
                   </div>
-                  <div className="text-[10px] text-[#4a5058] mono tracking-wider whitespace-nowrap">
+                  <div className="text-[10px] text-[#9ca3af] mono tracking-wider whitespace-nowrap">
                     {relativeTime(job.updated_at)}
                   </div>
                 </div>
@@ -119,12 +119,12 @@ export default async function JobsPage() {
           })}
         </div>
       ) : (
-        <div className="border border-dashed border-[#1f2328] rounded-md p-10 sm:p-12 text-center">
-          <Package size={28} className="mx-auto mb-3 text-[#2a2f36]" />
-          <div className="text-sm text-[#8a9199] mb-1">No jobs yet</div>
-          <div className="text-xs text-[#4a5058]">
+        <div className="border border-dashed border-[#e6e8eb] rounded-md p-10 sm:p-12 text-center">
+          <Package size={28} className="mx-auto mb-3 text-[#d1d5db]" />
+          <div className="text-sm text-[#5a6370] mb-1">No jobs yet</div>
+          <div className="text-xs text-[#9ca3af]">
             Hit{" "}
-            <span className="text-[#e8eaed]">New job</span> to plan your first
+            <span className="text-[#272727]">New job</span> to plan your first
             load.
           </div>
         </div>

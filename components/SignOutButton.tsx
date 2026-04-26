@@ -7,7 +7,7 @@ export default function SignOutButton() {
       <button
         type="submit"
         title="Sign out"
-        className="text-[#4a5058] hover:text-[#e8eaed] transition p-2 -m-2"
+        className="text-[#9ca3af] hover:text-[#272727] transition p-2 -m-2"
       >
         <LogOut size={14} />
       </button>

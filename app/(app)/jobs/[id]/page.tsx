@@ -29,7 +29,7 @@ export default async function JobEditorPage({ params }: PageProps) {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
       <Link
         href="/jobs"
-        className="inline-flex items-center gap-1.5 text-[11px] text-[#4a5058] hover:text-[#8a9199] transition tracking-wider uppercase mb-4"
+        className="inline-flex items-center gap-1.5 text-[11px] text-[#9ca3af] hover:text-[#5a6370] transition tracking-wider uppercase mb-4"
       >
         <ArrowLeft size={12} />
         Jobs
@@ -37,17 +37,17 @@ export default async function JobEditorPage({ params }: PageProps) {
 
       <div className="mb-4">
         <h1 className="text-lg font-semibold tracking-tight">{job.name}</h1>
-        <div className="text-[10px] text-[#4a5058] mono tracking-wider mt-0.5">
+        <div className="text-[10px] text-[#9ca3af] mono tracking-wider mt-0.5">
           {(truck?.shortLabel ?? "CUSTOM").toUpperCase()} ·{" "}
           {(job.status ?? "draft").toUpperCase()}
         </div>
       </div>
 
-      <div className="border border-dashed border-[#1f2328] rounded-md p-8 text-center">
-        <div className="text-sm text-[#8a9199] mb-2">
+      <div className="border border-dashed border-[#e6e8eb] rounded-md p-8 text-center">
+        <div className="text-sm text-[#5a6370] mb-2">
           Editor scaffolding only
         </div>
-        <div className="text-xs text-[#4a5058] leading-relaxed max-w-md mx-auto">
+        <div className="text-xs text-[#9ca3af] leading-relaxed max-w-md mx-auto">
           Vendor inputs, truck visualization, capacity bars, and auto-save
           arrive in the next builds (steps 5-8). For now this page just
           confirms the route + auth gate work.

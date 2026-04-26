@@ -45,23 +45,31 @@ The tool accepts vendor-quoted gear info in many formats (linear feet, dimension
 
 ## Aesthetic & Design System
 
-**Reference points:** Blackmagic Design control software, Linear, Vercel dashboard, high-end automotive UI.
+> **Phase 1 reality (changed from spec by client request):** the
+> palette was switched from the original dark broadcast-engineering
+> theme to a light theme matched to apacherentalgroup.com. Colors
+> below reflect the **current** palette. The original dark spec is
+> preserved in git history if we ever want to revisit.
 
-**Colors:**
-- Background: `#0a0b0d` (deep near-black)
-- Panel: `#0f1115`
-- Panel elevated: `#14161a`
-- Border subtle: `#1f2328`
-- Border default: `#2a2f36`
-- Border strong: `#3a4049`
-- Text primary: `#e8eaed`
-- Text secondary: `#8a9199`
-- Text tertiary: `#4a5058`
-- Accent primary (cyan - the Blackmagic color): `#00d4ff`
-- Accent success: `#00e084`
-- Accent warning: `#ffb800`
-- Accent warning-severe: `#ff7a45`
-- Accent danger: `#ff4757`
+**Reference points:** apacherentalgroup.com (the brand source of
+truth), Linear, Vercel dashboard light mode.
+
+**Colors (light, brand-matched):**
+- Background: `#ffffff` (white)
+- Panel: `#f8f9fa`
+- Panel elevated: `#eff1f4`
+- Border subtle: `#e6e8eb`
+- Border default: `#d1d5db`
+- Border strong: `#9ca3af`
+- Text primary: `#272727` (Apache near-black)
+- Text secondary: `#5a6370`
+- Text tertiary: `#9ca3af`
+- Accent primary: `#0e3e7a` (Apache navy)
+- Accent hover: `#02aed6` (Apache bright blue)
+- Accent success: `#16a34a`
+- Accent warning: `#ffa902` (Apache orange)
+- Accent warning-severe: `#ff7302`
+- Accent danger: `#dc2626`
 
 **Typography:**
 - UI / labels / body: Archivo (400, 500, 600, 700)

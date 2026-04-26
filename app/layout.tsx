@@ -24,7 +24,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a0b0d",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -41,7 +41,7 @@ export default function RootLayout({
       lang="en"
       className={`${archivo.variable} ${jetbrainsMono.variable} h-full`}
     >
-      <body className="min-h-full bg-[#0a0b0d] text-[#e8eaed] antialiased">
+      <body className="min-h-full bg-[#ffffff] text-[#272727] antialiased">
         {children}
       </body>
     </html>

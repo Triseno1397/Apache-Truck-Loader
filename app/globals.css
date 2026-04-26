@@ -1,20 +1,20 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-bg: #0a0b0d;
-  --color-panel: #0f1115;
-  --color-panel-raised: #14161a;
-  --color-border-subtle: #1f2328;
-  --color-border: #2a2f36;
-  --color-border-strong: #3a4049;
-  --color-fg: #e8eaed;
-  --color-fg-muted: #8a9199;
-  --color-fg-subtle: #4a5058;
-  --color-accent: #00d4ff;
-  --color-success: #00e084;
-  --color-warning: #ffb800;
-  --color-warning-strong: #ff7a45;
-  --color-danger: #ff4757;
+  --color-bg: #ffffff;
+  --color-panel: #f8f9fa;
+  --color-panel-raised: #eff1f4;
+  --color-border-subtle: #e6e8eb;
+  --color-border: #d1d5db;
+  --color-border-strong: #9ca3af;
+  --color-fg: #272727;
+  --color-fg-muted: #5a6370;
+  --color-fg-subtle: #9ca3af;
+  --color-accent: #0e3e7a;
+  --color-success: #16a34a;
+  --color-warning: #ffa902;
+  --color-warning-strong: #ff7302;
+  --color-danger: #dc2626;
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
@@ -22,8 +22,8 @@
 
 html,
 body {
-  background: #0a0b0d;
-  color: #e8eaed;
+  background: #ffffff;
+  color: #272727;
 }
 
 body {
@@ -43,7 +43,7 @@ body {
 
 input::placeholder,
 textarea::placeholder {
-  color: #4a5058;
+  color: #9ca3af;
 }
 
 input[type="number"] {
@@ -56,6 +56,6 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 *:focus-visible {
-  outline: 1px solid #00d4ff;
+  outline: 1px solid #0e3e7a;
   outline-offset: 1px;
 }
