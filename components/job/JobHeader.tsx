@@ -96,7 +96,7 @@ export default function JobHeader({
             }
           }}
           placeholder="Untitled job"
-          className="flex-1 min-w-0 bg-transparent text-base sm:text-lg font-semibold tracking-tight text-[#272727] focus:outline-none border-b border-transparent hover:border-[#d1d5db] focus:border-[#0e3e7a] transition py-0.5"
+          className="flex-1 min-w-0 bg-transparent text-base sm:text-lg font-semibold tracking-tight text-[#0e3e7a] focus:outline-none border-b border-transparent hover:border-[#d1d5db] focus:border-[#0e3e7a] transition py-0.5"
         />
         <div className="flex items-center gap-2 flex-shrink-0">
           {saving && (

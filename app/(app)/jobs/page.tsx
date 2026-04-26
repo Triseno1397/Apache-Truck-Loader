@@ -105,7 +105,7 @@ export default async function JobsPage() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
       <div className="flex items-center justify-between mb-4 sm:mb-6 gap-3">
         <div>
-          <h1 className="text-base sm:text-lg font-semibold tracking-tight">
+          <h1 className="text-base sm:text-lg font-semibold tracking-tight text-[#0e3e7a]">
             Jobs
           </h1>
           <div className="text-[10px] text-[#9ca3af] mono tracking-wider">
@@ -132,12 +132,12 @@ export default async function JobsPage() {
               <Link
                 key={job.id}
                 href={`/jobs/${job.id}`}
-                className="block bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 sm:p-4 hover:border-[#d1d5db] transition group"
+                className="block bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 sm:p-4 hover:border-[#0e3e7a] hover:bg-[#0e3e7a]/[0.03] transition group"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2 mb-1">
-                      <div className="text-sm font-semibold text-[#272727] truncate">
+                      <div className="text-sm font-semibold text-[#0e3e7a] truncate">
                         {job.name}
                       </div>
                       <span

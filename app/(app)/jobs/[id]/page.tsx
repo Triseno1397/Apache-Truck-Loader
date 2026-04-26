@@ -259,10 +259,10 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
       />
 
       {/* Active truck capacity panel */}
-      <div className="border border-[#e6e8eb] bg-[#f8f9fa] rounded-md mb-4 overflow-hidden">
-        <div className="px-4 sm:px-5 py-3 border-b border-[#e6e8eb] flex items-center justify-between gap-3">
+      <div className="border border-[#0e3e7a]/20 bg-[#f8f9fa] rounded-md mb-4 overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 border-b border-[#e6e8eb] bg-[#0e3e7a]/[0.04] flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-[#272727]">
+            <div className="text-sm font-semibold text-[#0e3e7a]">
               {activeSpec.label}
             </div>
             <div className="text-[10px] text-[#9ca3af] mono tracking-wide mt-0.5">
@@ -324,7 +324,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-baseline gap-2">
-            <h2 className="text-sm font-semibold tracking-tight">Vendors</h2>
+            <h2 className="text-sm font-semibold tracking-tight text-[#0e3e7a]">Vendors</h2>
             <span className="text-[10px] text-[#9ca3af] mono tracking-wider">
               {activeVendors.length.toString().padStart(2, "0")} ON THIS TRUCK
             </span>
@@ -457,10 +457,10 @@ function RollupSummary({
     totalCapLinearFt > 0 ? totalLinearFt / totalCapLinearFt : 0;
   const wtPct = totalCapWeight > 0 ? totalWeight / totalCapWeight : 0;
   return (
-    <div className="border border-[#e6e8eb] bg-white rounded-md mb-3 px-4 py-3">
+    <div className="border border-[#0e3e7a]/30 bg-[#0e3e7a]/[0.04] rounded-md mb-3 px-4 py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <div className="text-[10px] tracking-[0.2em] text-[#9ca3af] uppercase">
+          <div className="text-[10px] tracking-[0.2em] text-[#0e3e7a] uppercase font-semibold">
             Whole Load
           </div>
           <div className="text-xs text-[#5a6370] mt-0.5">

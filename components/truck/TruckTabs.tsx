@@ -117,7 +117,7 @@ function TabButton({
       onClick={onClick}
       className={`flex-shrink-0 text-left px-3 py-2 rounded border transition min-h-[44px] min-w-[140px] ${
         active
-          ? "bg-white border-[#0e3e7a] text-[#272727]"
+          ? "bg-[#0e3e7a]/[0.06] border-[#0e3e7a] text-[#0e3e7a]"
           : "bg-[#f8f9fa] border-[#e6e8eb] text-[#5a6370] hover:border-[#d1d5db] hover:text-[#272727]"
       }`}
     >
