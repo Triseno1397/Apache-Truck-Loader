@@ -20,9 +20,8 @@ import TruckTabs, {
   TruckSettingsBar,
   type TruckTab,
 } from "@/components/truck/TruckTabs";
-import TruckSVG, {
-  buildVendorColorMap,
-} from "@/components/truck/TruckSVG";
+import TruckSVG from "@/components/truck/TruckSVG";
+import { buildVendorColorMap } from "@/lib/vendor-colors";
 import TruckSideSVG from "@/components/truck/TruckSideSVG";
 import TruckViewToggle, {
   type TruckView,

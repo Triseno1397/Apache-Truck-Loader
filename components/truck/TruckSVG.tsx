@@ -955,25 +955,7 @@ function WidthLabel({
   );
 }
 
-// ----- Color palette helper (importable by callers) ----------------------
-
-export const VENDOR_COLOR_PALETTE = [
-  "#0e3e7a", // Apache navy
-  "#02aed6", // Apache cyan
-  "#16a34a", // green
-  "#ffa902", // amber
-  "#9333ea", // purple
-  "#0891b2", // teal
-  "#ea580c", // orange-deep
-  "#be185d", // pink
-] as const;
-
-export function buildVendorColorMap(
-  vendorIds: readonly string[],
-): Map<string, string> {
-  const map = new Map<string, string>();
-  vendorIds.forEach((id, i) => {
-    map.set(id, VENDOR_COLOR_PALETTE[i % VENDOR_COLOR_PALETTE.length]);
-  });
-  return map;
-}
+// Color helpers live in lib/vendor-colors.ts so server components (the
+// editor page) can call buildVendorColorMap() directly. Don't re-export
+// from this client component - that would re-introduce the same boundary
+// crossing that originally broke the editor page.
