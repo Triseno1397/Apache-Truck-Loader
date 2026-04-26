@@ -1,14 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   Box,
+  Check,
   Image as ImageIcon,
-  Layers,
+  Loader2,
   Package,
   Ruler,
-  X,
+  Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import {
   computeVendorPacking,
@@ -21,14 +23,16 @@ import {
   type CasePreset,
   type InputMethod,
 } from "@/lib/vendor-input";
-import { saveVendorAction } from "@/app/(app)/jobs/[id]/actions";
+import {
+  deleteVendorAction,
+  updateVendorAction,
+} from "@/app/(app)/jobs/[id]/actions";
 
 type Props = {
   jobId: string;
   truck: TruckCrossSection;
   cases: CasePreset[];
-  // present in edit mode
-  initial?: {
+  initial: {
     vendorId: string;
     name: string;
     inputMethod: InputMethod;
@@ -39,18 +43,22 @@ type Props = {
   };
 };
 
+type Status = "idle" | "saving" | "saved" | "error";
+type DimensionUnit = "in" | "ft";
+
 const METHODS: Array<{ id: InputMethod; icon: typeof Package; desc: string }> =
   [
     { id: "linear", icon: Ruler, desc: "Vendor gave a direct linear ft #" },
-    { id: "dimensions", icon: Box, desc: "L x W x H in inches" },
+    { id: "dimensions", icon: Box, desc: "L x W x H" },
     { id: "pieces", icon: Package, desc: "Pelican, SKB, road case, etc." },
     { id: "cubic", icon: Box, desc: "Vendor quoted cubic feet" },
     { id: "footprint", icon: Box, desc: "Staging floor area sq ft" },
-    { id: "pallets", icon: Package, desc: "Standard 48\" pallets" },
-    { id: "image", icon: ImageIcon, desc: "Photo + manual estimate (Phase 2 AI)" },
+    { id: "pallets", icon: Package, desc: 'Standard 48" pallets' },
+    { id: "image", icon: ImageIcon, desc: "Photo + manual estimate" },
   ];
 
-const SHORT_HEIGHT_THRESHOLD = 18; // matches lib/packing.ts default
+const SHORT_HEIGHT_THRESHOLD_IN = 18;
+const AUTO_SAVE_DEBOUNCE_MS = 600;
 
 function num(s: string | undefined): number {
   if (s === undefined || s === "") return 0;
@@ -64,16 +72,21 @@ function intOr(s: string | undefined, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function trimNum(n: number): string {
+  // 3-decimal precision, no trailing zeros
+  return parseFloat(n.toFixed(3)).toString();
+}
+
 export default function VendorForm({ jobId, truck, cases, initial }: Props) {
-  const isEdit = !!initial;
-  const [name, setName] = useState(initial?.name ?? "");
+  const router = useRouter();
+
+  // Form state
+  const [name, setName] = useState(initial.name);
   const [inputMethod, setInputMethod] = useState<InputMethod>(
-    initial?.inputMethod ?? "linear",
+    initial.inputMethod,
   );
 
-  // Each method has its own slice of state. Storing as strings keeps the
-  // input UX correct (empty = empty, no leading zero on number inputs).
-  const initialData = (initial?.inputData ?? {}) as Record<string, unknown>;
+  const initialData = (initial.inputData ?? {}) as Record<string, unknown>;
   const s = (k: string) => {
     const v = initialData[k];
     return v === undefined || v === null ? "" : String(v);
@@ -82,6 +95,8 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
   const [linearFt, setLinearFt] = useState(s("linearFt"));
   const [cubicFt, setCubicFt] = useState(s("cubicFt"));
   const [squareFt, setSquareFt] = useState(s("squareFt"));
+  // Dimensions are always stored in INCHES under the hood. The dimension
+  // unit toggle below converts the displayed value as the user switches.
   const [depthIn, setDepthIn] = useState(s("depthIn"));
   const [widthIn, setWidthIn] = useState(s("widthIn"));
   const [heightIn, setHeightIn] = useState(s("heightIn"));
@@ -91,32 +106,156 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
     s("estimatedLinearFt"),
   );
 
-  // tri-state stackable: "default" (use method default) | "true" | "false"
   const [stackable, setStackable] = useState<"default" | "true" | "false">(
-    initial?.stackable === null || initial?.stackable === undefined
-      ? "default"
-      : initial.stackable
-        ? "true"
-        : "false",
+    initial.stackable === null ? "default" : initial.stackable ? "true" : "false",
   );
 
   const [weightOverride, setWeightOverride] = useState(
-    initial?.weightOverride !== null && initial?.weightOverride !== undefined
+    initial.weightOverride !== null && initial.weightOverride !== undefined
       ? String(initial.weightOverride)
       : "",
   );
-  const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [notes, setNotes] = useState(initial.notes ?? "");
 
+  // depthIn/widthIn/heightIn state above hold the value in WHATEVER UNIT
+  // the user is currently typing in. When the unit toggle flips, switchUnit
+  // converts the display strings. dimensionInches() resolves them to inches
+  // at preview/save time so packing math always sees inches.
+  const [dimensionUnit, setDimensionUnit] = useState<DimensionUnit>("in");
+
+  function dimensionInches(displayValue: string): number {
+    const n = num(displayValue);
+    return dimensionUnit === "in" ? n : n * 12;
+  }
+
+  // Auto-save plumbing
+  const [status, setStatus] = useState<Status>("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+  const isFirstRenderRef = useRef(true);
+  const saveIdRef = useRef(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isLeaving, startLeaving] = useTransition();
+
+  // Build the input_data payload for the current method
+  function buildInputData(): Record<string, unknown> {
+    switch (inputMethod) {
+      case "linear":
+        return { linearFt: num(linearFt) };
+      case "cubic":
+        return { cubicFt: num(cubicFt) };
+      case "footprint":
+        return { squareFt: num(squareFt) };
+      case "dimensions":
+        return {
+          depthIn: dimensionInches(depthIn),
+          widthIn: dimensionInches(widthIn),
+          heightIn: dimensionInches(heightIn),
+          quantity: intOr(quantity),
+        };
+      case "pieces":
+        return { caseId, quantity: intOr(quantity) };
+      case "pallets":
+        return { quantity: intOr(quantity) };
+      case "image":
+        return { estimatedLinearFt: num(estimatedLinearFt) };
+    }
+  }
+
+  function stackableToBool(v: typeof stackable): boolean | null {
+    if (v === "default") return null;
+    return v === "true";
+  }
+
+  function parseWeightOverride(s: string): number | null {
+    if (s.trim() === "") return null;
+    const n = parseFloat(s);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  async function performSave(): Promise<{ ok: boolean }> {
+    saveIdRef.current++;
+    const myId = saveIdRef.current;
+    setStatus("saving");
+    setErrorMsg("");
+
+    const result = await updateVendorAction({
+      vendorId: initial.vendorId,
+      jobId,
+      name: name.trim() || "Untitled vendor",
+      inputMethod,
+      inputData: buildInputData(),
+      stackable: stackableToBool(stackable),
+      weightOverride: parseWeightOverride(weightOverride),
+      notes: notes.trim() || null,
+    });
+
+    if (myId !== saveIdRef.current) return { ok: result.ok };
+
+    if (result.ok) {
+      setStatus("saved");
+      setTimeout(() => {
+        if (myId === saveIdRef.current) setStatus("idle");
+      }, 1500);
+    } else {
+      setStatus("error");
+      setErrorMsg(result.error);
+    }
+    return { ok: result.ok };
+  }
+
+  // Debounced auto-save on every state change (skip the first render)
+  useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      void performSave();
+    }, AUTO_SAVE_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    name,
+    inputMethod,
+    linearFt,
+    cubicFt,
+    squareFt,
+    depthIn,
+    widthIn,
+    heightIn,
+    quantity,
+    caseId,
+    estimatedLinearFt,
+    stackable,
+    weightOverride,
+    notes,
+  ]);
+
+  // "Done" button: flush any pending debounced save, then navigate
+  function handleDone() {
+    startLeaving(async () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      await performSave();
+      router.push(`/jobs/${jobId}`);
+      router.refresh();
+    });
+  }
+
+  // ----- Live preview ----------------------------------------------------
   const selectedCase = useMemo(
     () => cases.find((c) => c.id === caseId) ?? null,
     [cases, caseId],
   );
 
-  // Build the runtime VendorInput from current state for the live preview.
   const previewInput: VendorInput | null = useMemo(() => {
     const stackOverride: boolean | undefined =
       stackable === "default" ? undefined : stackable === "true";
-
     switch (inputMethod) {
       case "linear":
         return { method: "linear", linearFt: num(linearFt) };
@@ -131,12 +270,15 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         };
       case "dimensions": {
         const qty = intOr(quantity);
-        if (!qty || !num(depthIn) || !num(widthIn)) return null;
+        const dIn = dimensionInches(depthIn);
+        const wIn = dimensionInches(widthIn);
+        const hIn = dimensionInches(heightIn);
+        if (!qty || dIn <= 0 || wIn <= 0) return null;
         return {
           method: "dimensions",
-          depthIn: num(depthIn),
-          widthIn: num(widthIn),
-          heightIn: num(heightIn),
+          depthIn: dIn,
+          widthIn: wIn,
+          heightIn: hIn,
           quantity: qty,
           stackable: stackOverride,
         };
@@ -197,49 +339,46 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
     inputMethod === "dimensions" ||
     inputMethod === "pallets";
 
-  // Effective stackable for the toggle display (so user sees what's active)
-  const effectiveStackable = (() => {
-    if (stackable !== "default") return stackable === "true";
-    if (inputMethod === "pieces") return selectedCase?.stackable ?? false;
-    if (inputMethod === "dimensions") {
-      const h = num(heightIn);
-      return h > 0 && h < SHORT_HEIGHT_THRESHOLD;
-    }
-    return false; // pallets default off
-  })();
+  // ----- inches/feet toggle helpers -------------------------------------
+  function switchUnit(next: DimensionUnit) {
+    if (next === dimensionUnit) return;
+    const factor = next === "ft" ? 1 / 12 : 12;
+    const convert = (raw: string): string => {
+      if (raw === "") return "";
+      const n = parseFloat(raw);
+      if (!Number.isFinite(n)) return raw;
+      return trimNum(n * factor);
+    };
+    setDepthIn(convert(depthIn));
+    setWidthIn(convert(widthIn));
+    setHeightIn(convert(heightIn));
+    setDimensionUnit(next);
+  }
+
+  // Inch-resolved values for the "internally" hint shown when in ft mode.
+  const depthInches = dimensionInches(depthIn);
+  const widthInches = dimensionInches(widthIn);
+  const heightInches = dimensionInches(heightIn);
 
   return (
-    <form
-      action={saveVendorAction}
-      className="bg-[#f8f9fa] border border-[#d1d5db] rounded-md p-4 sm:p-5 mb-3"
-    >
-      <input type="hidden" name="jobId" value={jobId} />
-      {isEdit && (
-        <input type="hidden" name="vendorId" value={initial!.vendorId} />
-      )}
-      <input type="hidden" name="input_method" value={inputMethod} />
-      <input
-        type="hidden"
-        name="stackable"
-        value={
-          stackable === "default"
-            ? "default"
-            : stackable === "true"
-              ? "true"
-              : "false"
-        }
-      />
-
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-[11px] tracking-[0.2em] text-[#5a6370] uppercase font-medium">
-          {isEdit ? "Edit Vendor" : "New Vendor"}
+    <div className="bg-[#f8f9fa] border border-[#d1d5db] rounded-md p-4 sm:p-5 mb-3">
+      {/* Header: edit label + status pill + Done */}
+      <div className="flex items-center justify-between mb-4 gap-2">
+        <div className="flex items-center gap-2">
+          <div className="text-[11px] tracking-[0.2em] text-[#5a6370] uppercase font-medium">
+            Edit Vendor
+          </div>
+          <StatusPill status={status} errorMsg={errorMsg} />
         </div>
-        <Link
-          href={`/jobs/${jobId}`}
-          className="text-[#9ca3af] hover:text-[#272727] transition p-1 -m-1"
+        <button
+          type="button"
+          onClick={handleDone}
+          disabled={isLeaving}
+          className="text-[11px] text-[#0e3e7a] hover:text-[#02aed6] transition tracking-wider uppercase font-semibold flex items-center gap-1.5 disabled:opacity-50"
         >
-          <X size={16} />
-        </Link>
+          {isLeaving ? <Loader2 size={12} className="animate-spin" /> : null}
+          Done
+        </button>
       </div>
 
       {/* Vendor name */}
@@ -249,12 +388,9 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         </label>
         <input
           type="text"
-          name="name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Keslow Camera, Delicate Productions"
-          required
-          autoFocus={!isEdit}
           className="w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a] transition"
         />
       </div>
@@ -297,22 +433,20 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         {inputMethod === "linear" && (
           <NumberField
             label="Linear feet"
-            name="linearFt"
-            step="0.1"
             value={linearFt}
             onChange={setLinearFt}
             placeholder="e.g. 12.5"
+            step="0.1"
           />
         )}
 
         {inputMethod === "cubic" && (
           <NumberField
             label="Cubic feet"
-            name="cubicFt"
-            step="0.1"
             value={cubicFt}
             onChange={setCubicFt}
             placeholder="e.g. 120"
+            step="0.1"
           />
         )}
 
@@ -320,11 +454,10 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
           <>
             <NumberField
               label="Floor footprint (sq ft)"
-              name="squareFt"
-              step="0.1"
               value={squareFt}
               onChange={setSquareFt}
               placeholder="e.g. 48"
+              step="0.1"
             />
             <div className="text-[10px] text-[#9ca3af] mt-1">
               Assumes full 8ft truck width
@@ -334,15 +467,44 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
 
         {inputMethod === "dimensions" && (
           <div>
-            <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5">
-              Dimensions (inches)
-            </label>
-            <div className="grid grid-cols-4 gap-2">
-              <PlainNumber name="depthIn" placeholder="L" value={depthIn} onChange={setDepthIn} />
-              <PlainNumber name="widthIn" placeholder="W" value={widthIn} onChange={setWidthIn} />
-              <PlainNumber name="heightIn" placeholder="H" value={heightIn} onChange={setHeightIn} />
-              <PlainNumber name="quantity" placeholder="Qty" value={quantity} onChange={setQuantity} step="1" />
+            <div className="flex items-baseline justify-between mb-1.5">
+              <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase">
+                Dimensions
+              </label>
+              <UnitToggle value={dimensionUnit} onChange={switchUnit} />
             </div>
+            <div className="grid grid-cols-4 gap-2">
+              <PlainNumber
+                placeholder="L"
+                value={depthIn}
+                onChange={setDepthIn}
+                suffix={dimensionUnit}
+              />
+              <PlainNumber
+                placeholder="W"
+                value={widthIn}
+                onChange={setWidthIn}
+                suffix={dimensionUnit}
+              />
+              <PlainNumber
+                placeholder="H"
+                value={heightIn}
+                onChange={setHeightIn}
+                suffix={dimensionUnit}
+              />
+              <PlainNumber
+                placeholder="Qty"
+                value={quantity}
+                onChange={setQuantity}
+                step="1"
+              />
+            </div>
+            {dimensionUnit === "ft" && (depthInches > 0 || widthInches > 0 || heightInches > 0) && (
+              <div className="text-[10px] text-[#9ca3af] mt-1 mono">
+                {depthInches.toFixed(0)}" x {widthInches.toFixed(0)}" x{" "}
+                {heightInches.toFixed(0)}" internally
+              </div>
+            )}
           </div>
         )}
 
@@ -353,42 +515,25 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
                 Case type
               </label>
               <select
-                name="caseId"
                 value={caseId}
                 onChange={(e) => setCaseId(e.target.value)}
                 className="w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a]"
               >
                 <option value="">Select case type...</option>
-                {cases.map((c) => {
-                  const perRow = Math.max(
-                    1,
-                    Math.floor(truck.widthIn / c.widthIn),
-                  );
-                  const layers = c.stackable
-                    ? Math.max(
-                        1,
-                        Math.min(
-                          Math.floor(truck.heightIn / c.heightIn),
-                          c.maxStack,
-                        ),
-                      )
-                    : 1;
-                  const stackBit = layers > 1 ? ` x ${layers} high` : "";
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {c.label} - {c.weightLb} lb - {perRow} across{stackBit}
-                    </option>
-                  );
-                })}
+                {cases.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label} &nbsp;·&nbsp; {c.depthIn}" x {c.widthIn}" x{" "}
+                    {c.heightIn}" &nbsp;·&nbsp; {c.weightLb} lb
+                  </option>
+                ))}
               </select>
             </div>
             <NumberField
               label="Quantity"
-              name="quantity"
-              step="1"
               value={quantity}
               onChange={setQuantity}
               placeholder="e.g. 8"
+              step="1"
             />
           </div>
         )}
@@ -397,11 +542,10 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
           <>
             <NumberField
               label="Number of pallets"
-              name="quantity"
-              step="1"
               value={quantity}
               onChange={setQuantity}
               placeholder="e.g. 3"
+              step="1"
             />
             <div className="text-[10px] text-[#9ca3af] mt-1">
               48"x40" pallets pair side-by-side (2 per 4ft row)
@@ -423,11 +567,10 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
             </div>
             <NumberField
               label="Estimated linear feet"
-              name="estimatedLinearFt"
-              step="0.1"
               value={estimatedLinearFt}
               onChange={setEstimatedLinearFt}
               placeholder="e.g. 15"
+              step="0.1"
             />
           </>
         )}
@@ -464,17 +607,6 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
               );
             })}
           </div>
-          <div className="text-[10px] text-[#9ca3af] mt-1.5 leading-relaxed">
-            Default = use the recommended setting for this method
-            {effectiveStackable && stackable === "default" ? (
-              <>
-                {" "}
-                <span className="text-[#0e3e7a] mono">
-                  (currently STACKED x {preview.layers})
-                </span>
-              </>
-            ) : null}
-          </div>
         </div>
       )}
 
@@ -490,7 +622,6 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         </label>
         <input
           type="number"
-          name="weight_lb_override"
           value={weightOverride}
           onChange={(e) => setWeightOverride(e.target.value)}
           placeholder={
@@ -510,7 +641,6 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         </label>
         <input
           type="text"
-          name="notes"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Fragile, load last, etc."
@@ -553,42 +683,102 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={!name.trim()}
-          className="flex-1 bg-[#0e3e7a] text-white font-semibold text-sm px-4 py-2.5 rounded hover:bg-[#02aed6] transition disabled:opacity-30 disabled:cursor-not-allowed min-h-[44px]"
-        >
-          {isEdit ? "Update" : "Add vendor"}
-        </button>
-        <Link
-          href={`/jobs/${jobId}`}
-          className="px-4 py-2.5 bg-white border border-[#d1d5db] text-[#5a6370] rounded text-sm hover:border-[#9ca3af] hover:text-[#272727] transition flex items-center min-h-[44px]"
-        >
-          Cancel
-        </Link>
+      {/* Footer: delete vendor */}
+      <div className="pt-3 border-t border-[#e6e8eb] flex items-center justify-between gap-2">
+        <form action={deleteVendorAction}>
+          <input type="hidden" name="vendorId" value={initial.vendorId} />
+          <input type="hidden" name="jobId" value={jobId} />
+          <button
+            type="submit"
+            className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition tracking-wider uppercase flex items-center gap-1.5"
+          >
+            <Trash2 size={11} />
+            Delete vendor
+          </button>
+        </form>
+        <div className="text-[10px] text-[#9ca3af] mono tracking-wider">
+          AUTO-SAVED
+        </div>
       </div>
-    </form>
+    </div>
   );
 }
 
-// Small inline subcomponents to keep the JSX readable
+// ----- Sub-components ----------------------------------------------------
+
+function StatusPill({ status, errorMsg }: { status: Status; errorMsg: string }) {
+  if (status === "saving") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-[#9ca3af] mono tracking-wider">
+        <Loader2 size={10} className="animate-spin" />
+        SAVING
+      </span>
+    );
+  }
+  if (status === "saved") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-[#16a34a] mono tracking-wider">
+        <Check size={10} />
+        SAVED
+      </span>
+    );
+  }
+  if (status === "error") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] text-[#dc2626] mono tracking-wider"
+        title={errorMsg}
+      >
+        <TriangleAlert size={10} />
+        SAVE FAILED
+      </span>
+    );
+  }
+  return null;
+}
+
+function UnitToggle({
+  value,
+  onChange,
+}: {
+  value: DimensionUnit;
+  onChange: (v: DimensionUnit) => void;
+}) {
+  return (
+    <div className="flex bg-white border border-[#d1d5db] rounded overflow-hidden text-[10px] tracking-wider uppercase">
+      {(["in", "ft"] as const).map((u) => {
+        const active = value === u;
+        return (
+          <button
+            key={u}
+            type="button"
+            onClick={() => onChange(u)}
+            className={`px-2 py-1 transition ${
+              active
+                ? "bg-[#0e3e7a] text-white"
+                : "text-[#5a6370] hover:text-[#272727]"
+            }`}
+          >
+            {u}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function NumberField({
   label,
-  name,
-  step,
   value,
   onChange,
   placeholder,
+  step,
 }: {
   label: string;
-  name: string;
-  step?: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  step?: string;
 }) {
   return (
     <div>
@@ -596,39 +786,45 @@ function NumberField({
         {label}
       </label>
       <PlainNumber
-        name={name}
-        step={step}
         value={value}
         onChange={onChange}
         placeholder={placeholder}
+        step={step}
       />
     </div>
   );
 }
 
 function PlainNumber({
-  name,
-  step,
   value,
   onChange,
   placeholder,
+  step,
+  suffix,
 }: {
-  name: string;
-  step?: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  step?: string;
+  suffix?: string;
 }) {
   return (
-    <input
-      type="number"
-      name={name}
-      step={step ?? "any"}
-      inputMode="decimal"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a] mono tabular-nums"
-    />
+    <div className="relative">
+      <input
+        type="number"
+        step={step ?? "any"}
+        inputMode="decimal"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a] mono tabular-nums ${suffix ? "pr-7" : ""}`}
+      />
+      {suffix && (
+        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#9ca3af] mono uppercase tracking-wider pointer-events-none">
+          {suffix}
+        </span>
+      )}
+    </div>
   );
 }
+

@@ -10,6 +10,7 @@ import {
   type InputMethod,
 } from "@/lib/vendor-input";
 import { packVendors } from "@/lib/load-packer";
+import { createVendorAction } from "./actions";
 import JobHeader from "@/components/job/JobHeader";
 import TruckSVG, {
   buildVendorColorMap,
@@ -19,13 +20,12 @@ import VendorForm from "@/components/vendor/VendorForm";
 
 type PageProps = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ add?: string; edit?: string }>;
+  searchParams: Promise<{ edit?: string }>;
 };
 
 export default async function JobEditorPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const sp = await searchParams;
-  const showAdd = sp.add === "1";
   const editId = sp.edit ?? null;
 
   const supabase = createAdminClient();
@@ -194,20 +194,19 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
               {hydratedVendors.length.toString().padStart(2, "0")} LISTED
             </span>
           </div>
-          {!showAdd && !editId && (
-            <Link
-              href={`/jobs/${job.id}?add=1`}
-              className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#0e3e7a] text-white font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition min-h-[40px]"
-            >
-              <Plus size={14} />
-              Add vendor
-            </Link>
+          {!editId && (
+            <form action={createVendorAction}>
+              <input type="hidden" name="jobId" value={job.id} />
+              <button
+                type="submit"
+                className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#0e3e7a] text-white font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition min-h-[40px]"
+              >
+                <Plus size={14} />
+                Add vendor
+              </button>
+            </form>
           )}
         </div>
-
-        {showAdd && (
-          <VendorForm jobId={job.id} truck={truckCS} cases={cases} />
-        )}
 
         <div className="space-y-2">
           {hydratedVendors.map((v) =>
@@ -246,7 +245,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
           )}
         </div>
 
-        {hydratedVendors.length === 0 && !showAdd && (
+        {hydratedVendors.length === 0 && !editId && (
           <div className="border border-dashed border-[#e6e8eb] rounded-md p-8 sm:p-10 text-center">
             <Package size={24} className="mx-auto mb-2 text-[#d1d5db]" />
             <div className="text-sm text-[#5a6370] mb-1">No vendors yet</div>
