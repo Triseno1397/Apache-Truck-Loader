@@ -19,12 +19,16 @@ import TruckTabs, {
 import TruckSVG, {
   buildVendorColorMap,
 } from "@/components/truck/TruckSVG";
+import TruckSideSVG from "@/components/truck/TruckSideSVG";
+import TruckViewToggle, {
+  type TruckView,
+} from "@/components/truck/TruckViewToggle";
 import VendorRow from "@/components/vendor/VendorRow";
 import VendorForm from "@/components/vendor/VendorForm";
 
 type PageProps = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ edit?: string; truck?: string }>;
+  searchParams: Promise<{ edit?: string; truck?: string; view?: string }>;
 };
 
 type JobTruckRow = {
@@ -52,6 +56,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
   const sp = await searchParams;
   const editId = sp.edit ?? null;
   const requestedTruckId = sp.truck ?? null;
+  const view: TruckView = sp.view === "side" ? "side" : "top";
 
   const supabase = createAdminClient();
 
@@ -275,21 +280,33 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
                 ` · ${activeSpec.liftgateLb} LB LIFTGATE`}
             </div>
           </div>
-          {(activeOverLen || activeOverWeight) && (
-            <div className="flex items-center gap-1.5 text-[#dc2626] bg-[#dc2626]/10 border border-[#dc2626]/30 rounded px-2 py-1 text-[10px] font-semibold tracking-wider">
-              <AlertTriangle size={12} />
-              OVER CAPACITY
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <TruckViewToggle jobId={job.id} active={view} />
+            {(activeOverLen || activeOverWeight) && (
+              <div className="flex items-center gap-1.5 text-[#dc2626] bg-[#dc2626]/10 border border-[#dc2626]/30 rounded px-2 py-1 text-[10px] font-semibold tracking-wider">
+                <AlertTriangle size={12} />
+                OVER CAPACITY
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="px-3 sm:px-5 py-3 bg-white border-b border-[#e6e8eb]">
-          <TruckSVG
-            truck={activeSpec}
-            load={activeLoad}
-            vendorColors={vendorColors}
-            vendorNames={vendorNames}
-          />
+          {view === "side" ? (
+            <TruckSideSVG
+              truck={activeSpec}
+              load={activeLoad}
+              vendorColors={vendorColors}
+              vendorNames={vendorNames}
+            />
+          ) : (
+            <TruckSVG
+              truck={activeSpec}
+              load={activeLoad}
+              vendorColors={vendorColors}
+              vendorNames={vendorNames}
+            />
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#e6e8eb]">
