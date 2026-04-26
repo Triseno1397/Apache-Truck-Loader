@@ -40,18 +40,22 @@ export const InputDataCubicSchema = z.object({
 export const InputDataFootprintSchema = z.object({
   squareFt: z.number().nonnegative(),
 });
+// All number fields allow 0 - vendors can save partial data and fill the
+// rest in later. The packing math returns 0 lin ft / 0 lb cleanly when
+// quantities or dimensions are missing, which the UI shows as "0 LIN FT
+// / 0 LB" - a clear visual signal to come back and finish the row.
 export const InputDataDimensionsSchema = z.object({
-  depthIn: z.number().positive(),
-  widthIn: z.number().positive(),
-  heightIn: z.number().positive(),
-  quantity: z.number().int().positive(),
+  depthIn: z.number().nonnegative(),
+  widthIn: z.number().nonnegative(),
+  heightIn: z.number().nonnegative(),
+  quantity: z.number().int().nonnegative(),
 });
 export const InputDataPiecesSchema = z.object({
-  caseId: z.string().uuid(),
-  quantity: z.number().int().positive(),
+  caseId: z.string(), // empty allowed; "no case picked yet" = incomplete row
+  quantity: z.number().int().nonnegative(),
 });
 export const InputDataPalletsSchema = z.object({
-  quantity: z.number().int().positive(),
+  quantity: z.number().int().nonnegative(),
 });
 export const InputDataImageSchema = z.object({
   estimatedLinearFt: z.number().nonnegative(),
@@ -147,7 +151,19 @@ export function hydrateVendorInput(args: {
       };
     case "pieces": {
       const preset = args.cases.get(parsed.data.caseId);
-      if (!preset) return null;
+      if (!preset) {
+        // No case picked yet (or the caseId references a deleted case).
+        // Return a zero-dim placeholder so the row still renders; packing
+        // math will resolve to 0 lin ft / 0 lb.
+        return {
+          method: "pieces",
+          case: { depthIn: 0, widthIn: 0, heightIn: 0, weightLb: 0 },
+          defaultStackable: false,
+          defaultMaxStack: 1,
+          quantity: parsed.data.quantity,
+          stackable: stackOverride,
+        };
+      }
       return {
         method: "pieces",
         case: {

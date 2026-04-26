@@ -356,7 +356,6 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
                 name="caseId"
                 value={caseId}
                 onChange={(e) => setCaseId(e.target.value)}
-                required
                 className="w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a]"
               >
                 <option value="">Select case type...</option>
