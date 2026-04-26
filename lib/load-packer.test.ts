@@ -429,11 +429,146 @@ describe("multi-truck per job - independent packing", () => {
   });
 });
 
+describe("manual placements - drag-anchored items", () => {
+  it("a single manual pallet placement creates a locked shelf at the snapped xIn", () => {
+    const r = packVendors(
+      [
+        {
+          id: "p",
+          vendorInput: PALLET_INPUT(1),
+          weightOverride: null,
+          // user dragged the pallet to ~80" from the front, ~10" from the wall
+          manualPlacements: [{ xIn: 80, yIn: 10 }],
+        },
+      ],
+      TRUCK_26,
+    );
+    // 80 snaps to 78 (6"-grid)... actually 80/6=13.33 -> round to 13 -> 78
+    expect(r.shelves).toHaveLength(1);
+    expect(r.shelves[0].startIn).toBe(78);
+    expect(r.shelves[0].depthIn).toBe(48); // pallet depth
+    expect(r.shelves[0].groundItems).toHaveLength(1);
+    expect(r.shelves[0].groundItems[0].isManual).toBe(true);
+    // 10 snaps to 12 (10/6=1.67 -> round to 2 -> 12)
+    expect(r.shelves[0].groundItems[0].xIn).toBe(12);
+    // totalLengthIn = startIn + depthIn for the rearmost shelf
+    expect(r.totalLengthIn).toBe(126);
+  });
+
+  it("auto items share the manual shelf when there's width room, then open new shelf for the rest", () => {
+    // 1 pallet manually anchored at xIn=120 yIn=0, plus 2 more pallets auto-packed.
+    // The manual shelf has 97 - 40 = 57in of free width, which fits another
+    // 40in pallet right beside it. The third pallet opens a new shelf at the rear.
+    const r = packVendors(
+      [
+        {
+          id: "p",
+          vendorInput: PALLET_INPUT(3),
+          weightOverride: null,
+          manualPlacements: [{ xIn: 120, yIn: 0 }], // pallet #1 anchored
+        },
+      ],
+      TRUCK_26,
+    );
+    expect(r.shelves).toHaveLength(2);
+    const manualShelf = r.shelves.find((s) => s.startIn === 120)!;
+    const autoShelf = r.shelves.find((s) => s.startIn === 168)!;
+    expect(manualShelf.groundItems).toHaveLength(2);
+    expect(manualShelf.groundItems.filter((g) => g.isManual)).toHaveLength(1);
+    expect(manualShelf.groundItems.filter((g) => !g.isManual)).toHaveLength(1);
+    expect(autoShelf.groundItems).toHaveLength(1);
+    expect(autoShelf.groundItems[0].isManual).toBe(false);
+    expect(r.totalLengthIn).toBe(216);
+  });
+
+  it("auto item drops into the y-gap left by a manual item in the same shelf", () => {
+    // Manual Pelican at the FAR side (yIn=80, width 21 -> occupies y 78..99... but
+    // truck width is 97, so snapped to fit). Auto Pelican should drop at the
+    // near wall (yIn=0).
+    const PELICAN_DEEP_FOR_SHELF = {
+      ...PELICAN_1620,
+      quantity: 2,
+      stackable: false,
+    };
+    const r = packVendors(
+      [
+        {
+          id: "k",
+          vendorInput: PELICAN_DEEP_FOR_SHELF,
+          weightOverride: null,
+          manualPlacements: [{ xIn: 0, yIn: 60 }], // pelican #1 anchored to passenger side
+        },
+      ],
+      TRUCK_26,
+    );
+    // Manual at startIn=0, manual item snapped to yIn=60. Auto Pelican
+    // drops in at yIn=0 (left of the manual one) since the gap [0..60]
+    // is wide enough for a 21in-wide Pelican.
+    expect(r.shelves).toHaveLength(1);
+    expect(r.shelves[0].groundItems).toHaveLength(2);
+    const sortedByY = [...r.shelves[0].groundItems].sort(
+      (a, b) => a.xIn - b.xIn,
+    );
+    expect(sortedByY[0].xIn).toBe(0);
+    expect(sortedByY[0].isManual).toBe(false);
+    expect(sortedByY[1].xIn).toBe(60);
+    expect(sortedByY[1].isManual).toBe(true);
+  });
+
+  it("manual placements snap xIn / yIn to the 6-inch grid", () => {
+    const r = packVendors(
+      [
+        {
+          id: "p",
+          vendorInput: PALLET_INPUT(1),
+          weightOverride: null,
+          manualPlacements: [{ xIn: 17, yIn: 4 }], // not on a 6" boundary
+        },
+      ],
+      TRUCK_26,
+    );
+    // 17/6 = 2.83 -> round 3 -> 18. 4/6 = 0.67 -> round 1 -> 6.
+    expect(r.shelves[0].startIn).toBe(18);
+    expect(r.shelves[0].groundItems[0].xIn).toBe(6);
+  });
+
+  it("no manual placements -> auto-packer behaves identically to before", () => {
+    // Sanity check: existing scenario produces same result whether we
+    // pass manualPlacements: [] or omit the field entirely.
+    const a = packVendors(
+      [
+        {
+          id: "p",
+          vendorInput: PALLET_INPUT(3),
+          weightOverride: null,
+          canBeBase: false,
+        },
+      ],
+      TRUCK_26,
+    );
+    const b = packVendors(
+      [
+        {
+          id: "p",
+          vendorInput: PALLET_INPUT(3),
+          weightOverride: null,
+          canBeBase: false,
+          manualPlacements: [],
+        },
+      ],
+      TRUCK_26,
+    );
+    expect(b.totalLengthIn).toBe(a.totalLengthIn);
+    expect(b.shelves.length).toBe(a.shelves.length);
+  });
+});
+
 describe("packLoad - edge cases", () => {
   it("item wider than truck is unplaced", () => {
     const items: PackableItem[] = [
       {
         vendorId: "v",
+        itemIndex: 0,
         depthIn: 24,
         widthIn: 200, // wider than 97in truck
         heightIn: 24,

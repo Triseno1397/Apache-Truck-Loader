@@ -2,10 +2,11 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Loader2, Plus, Trash2, Truck } from "lucide-react";
+import { Loader2, Plus, RotateCcw, Trash2, Truck } from "lucide-react";
 import { TRUCK_PRESETS, type TruckPresetId } from "@/lib/trucks";
 import {
   addJobTruckAction,
+  clearTruckPlacementsAction,
   deleteJobTruckAction,
   updateJobTruckAction,
 } from "@/app/(app)/jobs/[id]/actions";
@@ -152,11 +153,16 @@ export function TruckSettingsBar({
   truck,
   vendorCount,
   totalTruckCount,
+  hasManualPlacements,
 }: {
   jobId: string;
   truck: TruckTab;
   vendorCount: number;
   totalTruckCount: number;
+  // Drives the "Reset placements" affordance. Hidden when no item on
+  // this truck has been manually anchored - keeps the chrome clean for
+  // pure auto-pack flows.
+  hasManualPlacements: boolean;
 }) {
   const router = useRouter();
   const [label, setLabel] = useState(truck.label ?? "");
@@ -201,6 +207,16 @@ export function TruckSettingsBar({
         ? `Delete this truck? Its ${vendorCount} vendor${vendorCount === 1 ? "" : "s"} will be removed too. This is permanent.`
         : "Delete this truck?";
     if (!confirm(msg)) {
+      e.preventDefault();
+    }
+  }
+
+  function handleResetPlacementsSubmit(e: React.FormEvent<HTMLFormElement>) {
+    if (
+      !confirm(
+        "Clear every dragged-into-place item on this truck and let the auto-packer take over?",
+      )
+    ) {
       e.preventDefault();
     }
   }
@@ -299,19 +315,40 @@ export function TruckSettingsBar({
         </div>
       </div>
 
-      {canDelete && (
-        <div className="mt-3 pt-3 border-t border-[#e6e8eb] flex justify-end">
-          <form action={deleteJobTruckAction} onSubmit={handleDeleteSubmit}>
-            <input type="hidden" name="jobTruckId" value={truck.id} />
-            <input type="hidden" name="jobId" value={jobId} />
-            <button
-              type="submit"
-              className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition tracking-wider uppercase flex items-center gap-1.5"
+      {(canDelete || hasManualPlacements) && (
+        <div className="mt-3 pt-3 border-t border-[#e6e8eb] flex justify-between items-center gap-3">
+          {hasManualPlacements ? (
+            <form
+              action={clearTruckPlacementsAction}
+              onSubmit={handleResetPlacementsSubmit}
             >
-              <Trash2 size={11} />
-              Remove this truck
-            </button>
-          </form>
+              <input type="hidden" name="jobTruckId" value={truck.id} />
+              <input type="hidden" name="jobId" value={jobId} />
+              <button
+                type="submit"
+                className="text-[11px] text-[#5a6370] hover:text-[#0e3e7a] transition tracking-wider uppercase flex items-center gap-1.5"
+                title="Discard every drag-anchored position on this truck"
+              >
+                <RotateCcw size={11} />
+                Reset placements
+              </button>
+            </form>
+          ) : (
+            <span />
+          )}
+          {canDelete && (
+            <form action={deleteJobTruckAction} onSubmit={handleDeleteSubmit}>
+              <input type="hidden" name="jobTruckId" value={truck.id} />
+              <input type="hidden" name="jobId" value={jobId} />
+              <button
+                type="submit"
+                className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition tracking-wider uppercase flex items-center gap-1.5"
+              >
+                <Trash2 size={11} />
+                Remove this truck
+              </button>
+            </form>
+          )}
         </div>
       )}
     </div>

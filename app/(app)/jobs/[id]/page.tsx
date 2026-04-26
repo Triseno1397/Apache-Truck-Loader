@@ -9,7 +9,11 @@ import {
   hydrateVendorInput,
   type InputMethod,
 } from "@/lib/vendor-input";
-import { packVendors, type LoadResult } from "@/lib/load-packer";
+import {
+  packVendors,
+  type LoadResult,
+  type ManualPlacement,
+} from "@/lib/load-packer";
 import { createVendorAction } from "./actions";
 import JobHeader from "@/components/job/JobHeader";
 import TruckTabs, {
@@ -40,6 +44,28 @@ type JobTruckRow = {
   buffer_pct: number;
   sort_order: number;
 };
+
+// Defensive parse of vendors.manual_placements (JSONB). The packer
+// indexes into this array by itemIndex, so we MUST preserve array
+// positions - bad entries become null (auto-pack), not removed. The
+// shape is validated at write time by the server action.
+function parseManualPlacements(raw: unknown): (ManualPlacement | null)[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    if (
+      entry &&
+      typeof entry === "object" &&
+      typeof (entry as { xIn?: unknown }).xIn === "number" &&
+      typeof (entry as { yIn?: unknown }).yIn === "number"
+    ) {
+      return {
+        xIn: (entry as { xIn: number }).xIn,
+        yIn: (entry as { yIn: number }).yIn,
+      };
+    }
+    return null;
+  });
+}
 
 function truckSpecFor(row: JobTruckRow): TruckSpec {
   // Custom trucks land in a later step (admin UI to define them is not
@@ -143,6 +169,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
         vendorInput: v.hydrated!,
         weightOverride: v.row.weight_lb_override,
         canBeBase: v.row.can_be_base,
+        manualPlacements: parseManualPlacements(v.row.manual_placements),
       })),
       truckCS,
     );
@@ -261,6 +288,10 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
         truck={truckTabs.find((t) => t.id === activeTruck.id)!}
         vendorCount={activeVendors.length}
         totalTruckCount={trucks.length}
+        hasManualPlacements={activeVendors.some((v) => {
+          const placements = parseManualPlacements(v.row.manual_placements);
+          return placements.some((p) => p !== null);
+        })}
       />
 
       {/* Active truck capacity panel */}

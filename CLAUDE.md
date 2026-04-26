@@ -122,6 +122,20 @@ Test every feature on an actual phone viewport before considering it done.
 
 The smart 3D packing logic (width-aware pairing + height-aware stacking) is what makes this tool valuable. Do not simplify it. Do not replace it with cubic-feet-divided-by-64. See spec for the algorithm. All the logic lives in `lib/packing.ts` - everything else consumes it.
 
+## Manual placements (drag-to-anchor)
+
+`vendors.manual_placements` is a JSONB array indexed by item position
+within the vendor's expansion (item 0..qty-1). Entries are
+`{xIn, yIn}` (truck inches, snapped to a 6" grid) or `null` for
+"auto-pack this item." The packer pre-places anchored items as locked
+shelves at their saved positions, then the existing cross-vendor
+algorithm fills around them with slot-aware ground placement (auto
+items can squeeze into the y-gaps next to manual ones in the same
+shelf). Stacking on top of manually-anchored bases happens
+automatically. Per-truck "Reset placements" in TruckSettingsBar wipes
+every anchor on a truck and falls back to pure auto-pack. Drag is
+top-view only in v1; side view is read-only.
+
 ## Multi-truck data model
 
 A job has N trucks via `public.job_trucks` (one row per truck). Vendors

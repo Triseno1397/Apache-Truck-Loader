@@ -389,6 +389,98 @@ export async function updateVendorAction(args: {
   return { ok: true };
 }
 
+// ----- vendor: manual placement (drag-anchor an item) -------------------
+//
+// Persists the manual position of a single item (item N within a vendor's
+// expansion - e.g. pallet #3 of 5). The packer pre-places these as locked
+// shelves before auto-packing the rest. xIn/yIn are integer inches the UI
+// has already snapped to the 6" grid; we re-clamp defensively here.
+
+const PlacementSchema = z.object({
+  vendorId: z.string().uuid(),
+  itemIndex: z.number().int().nonnegative(),
+  xIn: z.number().int().nonnegative().max(2000),
+  yIn: z.number().int().nonnegative().max(500),
+});
+
+export async function setVendorPlacementAction(args: {
+  vendorId: string;
+  itemIndex: number;
+  xIn: number;
+  yIn: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = PlacementSchema.safeParse(args);
+  if (!parsed.success) return { ok: false, error: parsed.error.message };
+
+  const supabase = createAdminClient();
+
+  // Read current placements, splice in/extend the slot, write back.
+  // JSONB upserts in Supabase are easier with a read-modify-write than
+  // a server-side jsonb_set; the volume is tiny.
+  const { data: vendor, error: readErr } = await supabase
+    .from("vendors")
+    .select("manual_placements, job_id")
+    .eq("id", parsed.data.vendorId)
+    .single();
+  if (readErr || !vendor) {
+    return { ok: false, error: readErr?.message ?? "Vendor not found" };
+  }
+
+  const current = Array.isArray(vendor.manual_placements)
+    ? (vendor.manual_placements as Array<{ xIn: number; yIn: number } | null>)
+    : [];
+  // Pad with NULL (not a placeholder anchor) so untouched items stay in
+  // the auto-packer instead of being silently anchored at (0,0). The
+  // packer treats null entries as "no manual placement for this index".
+  while (current.length <= parsed.data.itemIndex) {
+    current.push(null);
+  }
+  current[parsed.data.itemIndex] = {
+    xIn: parsed.data.xIn,
+    yIn: parsed.data.yIn,
+  };
+
+  const { error: writeErr } = await supabase
+    .from("vendors")
+    .update({ manual_placements: current as Json })
+    .eq("id", parsed.data.vendorId);
+  if (writeErr) return { ok: false, error: writeErr.message };
+
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", vendor.job_id);
+
+  revalidatePath(`/jobs/${vendor.job_id}`);
+  return { ok: true };
+}
+
+// Clear every manual placement for every vendor on a single truck. Used
+// by the per-truck "Reset placements" affordance to fall back to pure
+// auto-packing.
+export async function clearTruckPlacementsAction(
+  formData: FormData,
+): Promise<never> {
+  const jobTruckId = String(formData.get("jobTruckId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobTruckId || !jobId) throw new Error("Missing ids");
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("vendors")
+    .update({ manual_placements: [] as unknown as Json })
+    .eq("job_truck_id", jobTruckId);
+  if (error) throw new Error(error.message);
+
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", jobId);
+
+  revalidatePath(`/jobs/${jobId}`);
+  redirect(`/jobs/${jobId}?truck=${jobTruckId}`);
+}
+
 // ----- vendor: delete ---------------------------------------------------
 
 export async function deleteVendorAction(formData: FormData): Promise<never> {

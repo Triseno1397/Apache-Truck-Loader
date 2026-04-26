@@ -306,6 +306,7 @@ export type Database = {
           input_method: Database["public"]["Enums"]["input_method"]
           job_id: string
           job_truck_id: string
+          manual_placements: Json
           name: string
           notes: string | null
           sort_order: number
@@ -320,6 +321,7 @@ export type Database = {
           input_method: Database["public"]["Enums"]["input_method"]
           job_id: string
           job_truck_id: string
+          manual_placements?: Json
           name: string
           notes?: string | null
           sort_order?: number
@@ -334,6 +336,7 @@ export type Database = {
           input_method?: Database["public"]["Enums"]["input_method"]
           job_id?: string
           job_truck_id?: string
+          manual_placements?: Json
           name?: string
           notes?: string | null
           sort_order?: number
