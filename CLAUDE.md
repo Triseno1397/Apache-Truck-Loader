@@ -122,6 +122,18 @@ Test every feature on an actual phone viewport before considering it done.
 
 The smart 3D packing logic (width-aware pairing + height-aware stacking) is what makes this tool valuable. Do not simplify it. Do not replace it with cubic-feet-divided-by-64. See spec for the algorithm. All the logic lives in `lib/packing.ts` - everything else consumes it.
 
+## Snapshots
+
+`public.job_snapshots` is an immutable JSONB log of full job-state
+captures. The blob shape is `{ version, job, trucks[], vendors[] }`
+where vendors reference their truck via `job_truck_idx` (an index into
+the trucks array, not a UUID — so a restore can mint fresh truck IDs).
+`createSnapshotAction` writes one; `restoreSnapshotAction` rewinds the
+live job AND auto-takes a fresh snapshot first, labeled "Auto-saved
+before restoring..." — so a restore is itself reversible. Snapshots
+have NO update/delete RLS policies; they're a forensic log. The
+SnapshotsPanel in the editor lists them with a one-click Restore.
+
 ## Manual placements (drag-to-anchor)
 
 `vendors.manual_placements` is a JSONB array indexed by item position

@@ -360,7 +360,14 @@ Two kinds of saves:
 
 **Auto-save (continuous):** As user edits job name, adds/edits vendors, switches trucks - all changes debounce-write to Supabase within 600ms. Status pill in header shows `SAVING...` -> `SAVED` -> fades. Never lose work.
 
-**Snapshot save (explicit):** User hits "Save Snapshot" to create a named checkpoint of the job. Useful for "this is the plan we're committing to" moment. Snapshots are immutable rows in a `job_snapshots` table (copy of job + vendors at moment of save). Users can view and restore any snapshot.
+**Snapshot save (explicit):** User hits "Save Snapshot" to create a
+named checkpoint of the job. Useful for "this is the plan we're
+committing to" moment. Snapshots are immutable rows in a `job_snapshots`
+table — a JSONB blob with version, job, every truck, and every vendor
+(including manual_placements). The SnapshotsPanel in the editor lists
+them with a one-click Restore. Restoring rewinds the live job to that
+state and **auto-takes a fresh snapshot first** (labeled "Auto-saved
+before restoring...") so the operation is itself reversible.
 
 ### 6. Job history access
 

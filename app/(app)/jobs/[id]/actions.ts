@@ -32,9 +32,9 @@ const StatusEnum = z.enum(["draft", "confirmed", "loaded", "archived"]);
 
 // ----- job updates -------------------------------------------------------
 //
-// truck_type, custom_truck_id and buffer_pct moved to public.job_trucks
-// in migration 0005. They're no longer fields on the job itself - one
-// job has N trucks, each with its own buffer.
+// truck_type and custom_truck_id moved to public.job_trucks in
+// migration 0005 (one job, N trucks). buffer_pct was dropped entirely
+// in migration 0007.
 
 const JobUpdateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
@@ -511,4 +511,246 @@ export async function deleteJobAction(formData: FormData): Promise<never> {
 
   revalidatePath("/jobs");
   redirect("/jobs");
+}
+
+// ----- snapshots --------------------------------------------------------
+//
+// A snapshot is an immutable JSONB blob capturing the full state of a
+// job (job + every job_truck + every vendor with its manual_placements)
+// at a moment in time. Used by the crew to lock in "this is the plan
+// we're committing to" before a load. Restoring rewinds the live job
+// back to the snapshot's state; restoring is itself reversible because
+// it auto-takes a fresh snapshot of the current state first.
+//
+// Schema (public.job_snapshots) is immutable - no UPDATE / DELETE RLS
+// policies. We never delete or rewrite snapshots.
+
+const SNAPSHOT_VERSION = 1;
+
+type SnapshotBlob = {
+  version: number;
+  job: {
+    name: string;
+    client: string | null;
+    event_date: string | null;
+    status: "draft" | "confirmed" | "loaded" | "archived";
+    notes: string | null;
+  };
+  trucks: Array<{
+    truck_type: "26ft_penske" | "53ft_semi" | "custom";
+    custom_truck_id: string | null;
+    label: string | null;
+    sort_order: number;
+  }>;
+  vendors: Array<{
+    // index into the trucks[] array - we don't carry the live truck
+    // UUIDs because restoring will mint new ones
+    job_truck_idx: number;
+    name: string;
+    input_method: InputMethod;
+    input_data: Record<string, unknown>;
+    stackable: boolean | null;
+    can_be_base: boolean | null;
+    weight_lb_override: number | null;
+    notes: string | null;
+    manual_placements: Array<{ xIn: number; yIn: number } | null>;
+  }>;
+};
+
+async function captureSnapshot(jobId: string): Promise<SnapshotBlob> {
+  const supabase = createAdminClient();
+  const [
+    { data: job, error: jobErr },
+    { data: trucks, error: trucksErr },
+    { data: vendors, error: vendorsErr },
+  ] = await Promise.all([
+    supabase.from("jobs").select("*").eq("id", jobId).single(),
+    supabase
+      .from("job_trucks")
+      .select("*")
+      .eq("job_id", jobId)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("vendors")
+      .select("*")
+      .eq("job_id", jobId)
+      .order("created_at", { ascending: true }),
+  ]);
+  if (jobErr || !job) throw new Error(jobErr?.message ?? "Job not found");
+  if (trucksErr) throw new Error(trucksErr.message);
+  if (vendorsErr) throw new Error(vendorsErr.message);
+
+  // Map live truck IDs to indexes in the captured array so vendor
+  // restore can resolve which truck a vendor belongs to without UUIDs.
+  const truckIdxById = new Map<string, number>();
+  (trucks ?? []).forEach((t, i) => truckIdxById.set(t.id, i));
+
+  return {
+    version: SNAPSHOT_VERSION,
+    job: {
+      name: job.name,
+      client: job.client,
+      event_date: job.event_date,
+      status: job.status,
+      notes: job.notes,
+    },
+    trucks: (trucks ?? []).map((t) => ({
+      truck_type: t.truck_type,
+      custom_truck_id: t.custom_truck_id,
+      label: t.label,
+      sort_order: t.sort_order,
+    })),
+    vendors: (vendors ?? []).map((v) => ({
+      job_truck_idx: truckIdxById.get(v.job_truck_id) ?? 0,
+      name: v.name,
+      input_method: v.input_method as InputMethod,
+      input_data: (v.input_data ?? {}) as Record<string, unknown>,
+      stackable: v.stackable,
+      can_be_base: v.can_be_base,
+      weight_lb_override: v.weight_lb_override,
+      notes: v.notes,
+      manual_placements: Array.isArray(v.manual_placements)
+        ? (v.manual_placements as Array<{ xIn: number; yIn: number } | null>)
+        : [],
+    })),
+  };
+}
+
+export async function createSnapshotAction(args: {
+  jobId: string;
+  label: string | null;
+}): Promise<{ ok: true; snapshotId: string } | { ok: false; error: string }> {
+  const jobId = args.jobId;
+  if (!jobId) return { ok: false, error: "Missing jobId" };
+
+  try {
+    const blob = await captureSnapshot(jobId);
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("job_snapshots")
+      .insert({
+        job_id: jobId,
+        label: args.label?.trim() || null,
+        data: blob as unknown as Json,
+      })
+      .select("id")
+      .single();
+    if (error || !data) {
+      return { ok: false, error: error?.message ?? "Failed to save snapshot" };
+    }
+    revalidatePath(`/jobs/${jobId}`);
+    return { ok: true, snapshotId: data.id };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to save snapshot",
+    };
+  }
+}
+
+// Replay a snapshot back into the live job. Auto-takes a "before
+// restore" snapshot first so the operation is reversible. Then deletes
+// every current truck + vendor and re-inserts from the blob. This is
+// not a single SQL transaction - if it fails midway the auto-snapshot
+// is the recovery path.
+export async function restoreSnapshotAction(
+  formData: FormData,
+): Promise<never> {
+  const snapshotId = String(formData.get("snapshotId") ?? "");
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!snapshotId || !jobId) throw new Error("Missing ids");
+
+  const supabase = createAdminClient();
+
+  // 1. Read the snapshot blob.
+  const { data: snap, error: snapErr } = await supabase
+    .from("job_snapshots")
+    .select("data, label, created_at")
+    .eq("id", snapshotId)
+    .single();
+  if (snapErr || !snap) throw new Error(snapErr?.message ?? "Snapshot not found");
+  const blob = snap.data as unknown as SnapshotBlob;
+  if (!blob || blob.version !== SNAPSHOT_VERSION) {
+    throw new Error("Unsupported snapshot version");
+  }
+
+  // 2. Auto-snapshot the current state for reversibility. Label it so
+  //    the user can find it.
+  const auto = await captureSnapshot(jobId);
+  const restoreLabel = `Auto-saved before restoring "${snap.label ?? new Date(snap.created_at).toLocaleString()}"`;
+  await supabase.from("job_snapshots").insert({
+    job_id: jobId,
+    label: restoreLabel,
+    data: auto as unknown as Json,
+  });
+
+  // 3. Delete current trucks (cascades to vendors via FK on delete).
+  const { error: delErr } = await supabase
+    .from("job_trucks")
+    .delete()
+    .eq("job_id", jobId);
+  if (delErr) throw new Error(delErr.message);
+
+  // 4. Update job-level fields.
+  await supabase
+    .from("jobs")
+    .update({
+      name: blob.job.name,
+      client: blob.job.client,
+      event_date: blob.job.event_date,
+      status: blob.job.status,
+      notes: blob.job.notes,
+    })
+    .eq("id", jobId);
+
+  // 5. Re-create trucks. Capture the new IDs in order so vendors can
+  //    resolve their job_truck_id by index.
+  const truckIds: string[] = [];
+  for (const t of blob.trucks) {
+    const { data, error } = await supabase
+      .from("job_trucks")
+      .insert({
+        job_id: jobId,
+        truck_type: t.truck_type,
+        custom_truck_id:
+          t.truck_type === "custom" ? t.custom_truck_id : null,
+        label: t.label,
+        sort_order: t.sort_order,
+      })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(error?.message ?? "Truck insert failed");
+    truckIds.push(data.id);
+  }
+
+  // 6. Re-create vendors, mapping job_truck_idx -> the freshly-minted
+  //    truck IDs.
+  if (blob.vendors.length > 0) {
+    const vendorRows = blob.vendors.map((v) => ({
+      job_id: jobId,
+      job_truck_id:
+        truckIds[v.job_truck_idx] ?? truckIds[0] ?? truckIds[truckIds.length - 1],
+      name: v.name,
+      input_method: v.input_method,
+      input_data: v.input_data as Json,
+      stackable: v.stackable,
+      can_be_base: v.can_be_base,
+      weight_lb_override: v.weight_lb_override,
+      notes: v.notes,
+      manual_placements: v.manual_placements as unknown as Json,
+    }));
+    const { error: vErr } = await supabase.from("vendors").insert(vendorRows);
+    if (vErr) throw new Error(vErr.message);
+  }
+
+  // 7. Touch updated_at so the jobs list reflects the change.
+  await supabase
+    .from("jobs")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", jobId);
+
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/jobs");
+  redirect(`/jobs/${jobId}`);
 }

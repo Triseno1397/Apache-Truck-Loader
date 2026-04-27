@@ -15,6 +15,9 @@ import {
 } from "@/lib/load-packer";
 import { createVendorAction } from "./actions";
 import JobHeader from "@/components/job/JobHeader";
+import SnapshotsPanel, {
+  type SnapshotSummary,
+} from "@/components/job/SnapshotsPanel";
 import TruckTabs, {
   TruckSettingsBar,
   type TruckTab,
@@ -83,22 +86,32 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
 
   const supabase = createAdminClient();
 
-  const [{ data: job, error: jobErr }, { data: truckRows }, { data: vendors }, cases] =
-    await Promise.all([
-      supabase.from("jobs").select("*").eq("id", id).single(),
-      supabase
-        .from("job_trucks")
-        .select("*")
-        .eq("job_id", id)
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("vendors")
-        .select("*")
-        .eq("job_id", id)
-        .order("created_at", { ascending: true }),
-      fetchAllCases(),
-    ]);
+  const [
+    { data: job, error: jobErr },
+    { data: truckRows },
+    { data: vendors },
+    { data: snapshotRows },
+    cases,
+  ] = await Promise.all([
+    supabase.from("jobs").select("*").eq("id", id).single(),
+    supabase
+      .from("job_trucks")
+      .select("*")
+      .eq("job_id", id)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("vendors")
+      .select("*")
+      .eq("job_id", id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("job_snapshots")
+      .select("id, label, created_at, data")
+      .eq("job_id", id)
+      .order("created_at", { ascending: false }),
+    fetchAllCases(),
+  ]);
 
   if (jobErr || !job) notFound();
 
@@ -110,6 +123,24 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
     label: r.label,
     sort_order: r.sort_order,
   }));
+
+  // Build snapshot summaries for the panel. We're already loading the
+  // full data blob just to count trucks / vendors - acceptable at the
+  // current scale; if snapshots get heavy we'd add a separate stats
+  // column or a SQL count.
+  const snapshots: SnapshotSummary[] = (snapshotRows ?? []).map((s) => {
+    const blob = (s.data ?? {}) as {
+      trucks?: unknown[];
+      vendors?: unknown[];
+    };
+    return {
+      id: s.id,
+      label: s.label,
+      createdAt: s.created_at,
+      truckCount: Array.isArray(blob.trucks) ? blob.trucks.length : 0,
+      vendorCount: Array.isArray(blob.vendors) ? blob.vendors.length : 0,
+    };
+  });
 
   // Edge case: a job with zero trucks shouldn't normally exist (createJob
   // seeds one, the migration backfilled one for legacy rows, and the
@@ -253,6 +284,8 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
           job.status as "draft" | "confirmed" | "loaded" | "archived"
         }
       />
+
+      <SnapshotsPanel jobId={job.id} snapshots={snapshots} />
 
       {/* Cross-truck roll-up - sits above the tabs so the user always sees
           how the whole load looks regardless of which truck they're on. */}
