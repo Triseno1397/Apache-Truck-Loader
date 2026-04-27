@@ -244,12 +244,3 @@ export function computeVendorWeight(
   return 0;
 }
 
-// Effective length capacity given a buffer percent (0-100). Subtracts the
-// safety margin that covers cable runs, gaff kits, tie-down space, etc.
-export function effectiveLengthFt(
-  truckInteriorLengthFt: number,
-  bufferPct: number,
-): number {
-  const clamped = Math.min(100, Math.max(0, bufferPct));
-  return truckInteriorLengthFt * (1 - clamped / 100);
-}

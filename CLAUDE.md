@@ -140,14 +140,18 @@ top-view only in v1; side view is read-only.
 
 A job has N trucks via `public.job_trucks` (one row per truck). Vendors
 are pinned to a specific truck via `vendors.job_truck_id`. Each truck
-holds its own `truck_type`, `custom_truck_id`, `label`, `buffer_pct`,
-and `sort_order` - those fields no longer exist on `jobs`. Each truck
+holds its own `truck_type`, `custom_truck_id`, `label`, and
+`sort_order` - those fields no longer exist on `jobs`. Each truck
 packs **independently** (one `packVendors` call per truck with its own
 `truckCrossSection`); roll-up totals sum across trucks. The editor uses
 the `?truck=<id>` query param to track the active tab; default is the
 first truck by `sort_order`. A job must always have at least one truck
 (`createJobAction` seeds one and `deleteJobTruckAction` blocks the
 last).
+
+**No buffer/safety-margin column** - the crew asked for buffer removed
+in 0007; capacity warnings now fire at >75% (amber), >95% (orange) and
+>100% (red) of the truck's true interior length.
 
 ## TypeScript rules
 

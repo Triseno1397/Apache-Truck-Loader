@@ -17,7 +17,6 @@ export type TruckTab = {
   id: string;
   truckType: JobTruckType;
   label: string | null;
-  bufferPct: number;
   vendorCount: number;
   fillPct: number; // 0..1+
   overCapacity: boolean;
@@ -166,7 +165,6 @@ export function TruckSettingsBar({
 }) {
   const router = useRouter();
   const [label, setLabel] = useState(truck.label ?? "");
-  const [bufferPct, setBufferPct] = useState(truck.bufferPct);
   const [saving, startSaving] = useTransition();
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -193,12 +191,6 @@ export function TruckSettingsBar({
     const next = trimmed === "" ? null : trimmed;
     if ((truck.label ?? "") === (next ?? "")) return;
     commit({ label: next });
-  }
-
-  function commitBuffer(next: number) {
-    if (next === bufferPct) return;
-    setBufferPct(next);
-    commit({ buffer_pct: next });
   }
 
   function handleDeleteSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -242,7 +234,7 @@ export function TruckSettingsBar({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5">
             Name
@@ -281,36 +273,6 @@ export function TruckSettingsBar({
                 );
               },
             )}
-          </div>
-        </div>
-
-        <div>
-          <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5 flex items-center justify-between">
-            <span>Buffer</span>
-            <span className="mono normal-case tracking-wider text-[#5a6370]">
-              {bufferPct}%
-            </span>
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="30"
-            step="1"
-            value={bufferPct}
-            onChange={(e) => setBufferPct(parseInt(e.target.value, 10))}
-            onMouseUp={(e) =>
-              commitBuffer(parseInt((e.target as HTMLInputElement).value, 10))
-            }
-            onTouchEnd={(e) =>
-              commitBuffer(parseInt((e.target as HTMLInputElement).value, 10))
-            }
-            onKeyUp={(e) =>
-              commitBuffer(parseInt((e.target as HTMLInputElement).value, 10))
-            }
-            className="w-full accent-[#0e3e7a] h-9"
-          />
-          <div className="text-[9px] text-[#9ca3af] tracking-wider uppercase mt-0.5">
-            Reserved space for cables / tie-downs
           </div>
         </div>
       </div>

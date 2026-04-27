@@ -121,7 +121,6 @@ const JobTruckUpdateSchema = z
     truck_type: TruckTypeEnum.optional(),
     custom_truck_id: z.string().uuid().nullable().optional(),
     label: z.string().trim().max(80).nullable().optional(),
-    buffer_pct: z.number().int().min(0).max(100).optional(),
     sort_order: z.number().int().min(0).optional(),
   })
   // truck_type='custom' requires a custom_truck_id; the DB has the same

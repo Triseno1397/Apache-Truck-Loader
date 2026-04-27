@@ -126,11 +126,12 @@ Managed by Supabase Auth. Extended with:
 - `truck_type` enum: `26ft_penske`, `53ft_semi`, `custom`
 - `custom_truck_id` uuid FK -> custom_trucks (nullable, used when truck_type = 'custom')
 - `label` text (optional, e.g., "Truck A", "Stage gear")
-- `buffer_pct` int (default 10) - per-truck safety margin
 - `sort_order` int (drives tab order in the editor)
 - `created_at` timestamptz
 - One row per truck on a job. A job always has at least one truck (the
   delete action blocks removing the last one).
+- **No buffer/safety-margin field** - removed in 0007; capacity warnings
+  fire at >75% / >95% / >100% of the truck's true interior length.
 
 #### `vendors`
 - `id` uuid PK
@@ -234,15 +235,13 @@ linearFt = rows * (item_depth_in / 12)
 | Tripod case | yes | 2 |
 | Standard pallet | no (user-togglable) | 1 |
 
-### Buffer percentage
+### Capacity warnings (no buffer)
 
-Each truck on a job has its own `buffer_pct` (default 10%, lives on
-`job_trucks` rather than `jobs` so a tight stage-gear truck can run a
-different margin from a more flexible stack-everything truck). Applied
-capacity = `truck.cargoLength * (1 - bufferPct/100)`. This accounts for
-cable ramps, gaff tape kits, misc gear, and crew tie-down space that
-never makes it onto the load sheet. Display as "effective capacity"
-alongside raw capacity.
+Earlier versions had a per-truck `buffer_pct` that carved a safety
+margin out of the interior length. The crew found it unnecessary and
+asked it gone (migration 0007 dropped the column and the slider).
+Capacity warnings now use the truck's true interior length: amber at
+>75%, orange at >95%, red at >100%.
 
 ### Auto-save debounced writes
 
@@ -308,7 +307,6 @@ Same fundamental layout as the prototype, upgraded with:
 - The active tab shows a "Truck Settings" bar with:
   - Name (label) input
   - Truck-type segmented control (26ft / 53ft / Custom)
-  - Buffer slider (0-30%, per-truck)
   - "Remove this truck" action - cascades to the truck's vendors with
     a confirm. Hidden when the job has only one truck.
 - Vendor list, capacity bars, and the truck visualization below the

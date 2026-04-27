@@ -183,7 +183,6 @@ export type Database = {
       }
       job_trucks: {
         Row: {
-          buffer_pct: number
           created_at: string
           custom_truck_id: string | null
           id: string
@@ -193,7 +192,6 @@ export type Database = {
           truck_type: Database["public"]["Enums"]["truck_type"]
         }
         Insert: {
-          buffer_pct?: number
           created_at?: string
           custom_truck_id?: string | null
           id?: string
@@ -203,7 +201,6 @@ export type Database = {
           truck_type?: Database["public"]["Enums"]["truck_type"]
         }
         Update: {
-          buffer_pct?: number
           created_at?: string
           custom_truck_id?: string | null
           id?: string

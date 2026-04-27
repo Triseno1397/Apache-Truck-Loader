@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Check, Package, Plus } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TRUCK_PRESETS, truckCrossSection, type TruckSpec } from "@/lib/trucks";
-import { effectiveLengthFt } from "@/lib/packing";
 import { fetchAllCases, buildCaseLookup } from "@/lib/cases";
 import {
   hydrateVendorInput,
@@ -40,7 +39,6 @@ type JobTruckRow = {
   truck_type: "26ft_penske" | "53ft_semi" | "custom";
   custom_truck_id: string | null;
   label: string | null;
-  buffer_pct: number;
   sort_order: number;
 };
 
@@ -110,7 +108,6 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
     truck_type: r.truck_type as "26ft_penske" | "53ft_semi" | "custom",
     custom_truck_id: r.custom_truck_id,
     label: r.label,
-    buffer_pct: r.buffer_pct,
     sort_order: r.sort_order,
   }));
 
@@ -193,7 +190,6 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
       id: t.id,
       truckType: t.truck_type,
       label: t.label,
-      bufferPct: t.buffer_pct,
       vendorCount: allHydrated.filter((v) => v.row.job_truck_id === t.id).length,
       fillPct: spec.interiorLengthFt > 0 ? lenFt / spec.interiorLengthFt : 0,
       overCapacity:
@@ -217,13 +213,8 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
 
   const activeLinearFt = activeLoad.totalLengthIn / 12;
   const activeWeight = activeLoad.totalWeightLb;
-  const activeEffectiveLen = effectiveLengthFt(
-    activeSpec.interiorLengthFt,
-    activeTruck.buffer_pct,
-  );
   const activeOverLen = activeLinearFt > activeSpec.interiorLengthFt;
   const activeOverWeight = activeWeight > activeSpec.cargoWeightLb;
-  const activeOverEff = activeLinearFt > activeEffectiveLen;
   const activeLengthPct =
     activeSpec.interiorLengthFt > 0
       ? activeLinearFt / activeSpec.interiorLengthFt
@@ -347,13 +338,10 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
             unit="FT"
             decimals={1}
             highlight={activeOverLen}
-            warning={!activeOverLen && activeOverEff}
             extraNote={
               activeOverLen
                 ? `+${(activeLinearFt - activeSpec.interiorLengthFt).toFixed(1)} FT OVER`
-                : activeOverEff
-                  ? `OVER BUFFER (${activeEffectiveLen.toFixed(1)} FT EFFECTIVE)`
-                  : null
+                : null
             }
           />
           <CapacityCell
@@ -452,13 +440,6 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
                   Won't fit on this truck - need a bigger truck or split the load
                 </span>
               </>
-            ) : activeOverEff ? (
-              <>
-                <AlertTriangle size={14} className="text-[#ff7302]" />
-                <span className="text-xs text-[#ff7302]">
-                  Over the {activeTruck.buffer_pct}% buffer - very tight
-                </span>
-              </>
             ) : activeLengthPct > 0.75 ? (
               <>
                 <AlertTriangle size={14} className="text-[#ffa902]" />
@@ -550,7 +531,6 @@ function CapacityCell({
   unit,
   decimals,
   highlight,
-  warning,
   extraNote,
 }: {
   label: string;
@@ -559,20 +539,17 @@ function CapacityCell({
   unit: string;
   decimals: number;
   highlight?: boolean;
-  warning?: boolean;
   extraNote?: string | null;
 }) {
   const pct = Math.min(1, value / cap);
   const overPct = value / cap;
   const color = highlight
     ? "#dc2626"
-    : warning
+    : overPct > 0.95
       ? "#ff7302"
-      : overPct > 0.95
-        ? "#ff7302"
-        : overPct > 0.75
-          ? "#ffa902"
-          : "#0e3e7a";
+      : overPct > 0.75
+        ? "#ffa902"
+        : "#0e3e7a";
 
   return (
     <div className="p-4 sm:p-5">

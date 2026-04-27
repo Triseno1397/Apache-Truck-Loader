@@ -4,7 +4,6 @@ import {
   computeVendorPacking,
   computeVendorWeight,
   cubicFeetToLinearFeet,
-  effectiveLengthFt,
   footprintToLinearFeet,
   packItems,
   type CaseDimensions,
@@ -330,17 +329,3 @@ describe("computeVendorWeight", () => {
   });
 });
 
-describe("effectiveLengthFt - buffer math", () => {
-  it("0% buffer returns the full length", () => {
-    expect(effectiveLengthFt(25.92, 0)).toBe(25.92);
-  });
-
-  it("10% buffer (default) cuts the 26ft truck to ~23.3 ft", () => {
-    expect(effectiveLengthFt(25.92, 10)).toBeCloseTo(23.328, 3);
-  });
-
-  it("clamps buffer to [0, 100]", () => {
-    expect(effectiveLengthFt(25.92, -5)).toBe(25.92);
-    expect(effectiveLengthFt(25.92, 150)).toBe(0);
-  });
-});
