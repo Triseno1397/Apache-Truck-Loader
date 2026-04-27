@@ -102,12 +102,37 @@ export function parseInputData(
 
 // ----- Hydration: DB row -> runtime VendorInput --------------------------
 
+export type CaseCategory =
+  | "flat_screen"
+  | "trunk_utility"
+  | "audio_video"
+  | "work_box"
+  | "rack";
+
+// Display order in the case-picker dropdown.
+export const CASE_CATEGORY_ORDER: readonly CaseCategory[] = [
+  "flat_screen",
+  "trunk_utility",
+  "audio_video",
+  "work_box",
+  "rack",
+] as const;
+
+export const CASE_CATEGORY_LABELS: Record<CaseCategory, string> = {
+  flat_screen: "Flat-Screen Display Cases",
+  trunk_utility: "Trunk & Utility Cases",
+  audio_video: "Audio-Video Cases",
+  work_box: "Work Boxes",
+  rack: "Rack Cases",
+};
+
 export type CasePreset = CaseDimensions & {
   id: string;
   label: string;
   weightLb: number;
   stackable: boolean;
   maxStack: number;
+  category: CaseCategory | null;
 };
 
 export type CaseLookup = Map<string, CasePreset>;

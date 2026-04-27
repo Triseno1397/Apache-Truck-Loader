@@ -19,7 +19,10 @@ import {
   type VendorInput,
 } from "@/lib/packing";
 import {
+  CASE_CATEGORY_LABELS,
+  CASE_CATEGORY_ORDER,
   INPUT_METHOD_LABELS,
+  type CaseCategory,
   type CasePreset,
   type InputMethod,
 } from "@/lib/vendor-input";
@@ -250,7 +253,10 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
     notes,
   ]);
 
-  // "Done" button: flush any pending debounced save, then navigate
+  // "Done" button: flush any pending debounced save, then drop the
+  // ?edit= query param so the editor closes. router.replace with
+  // scroll: false keeps the user's scroll position - router.push used
+  // to scroll the page back to the top.
   function handleDone() {
     startLeaving(async () => {
       if (debounceRef.current) {
@@ -258,7 +264,38 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
         debounceRef.current = null;
       }
       await performSave();
-      router.push(`/jobs/${jobId}`);
+      const sp = new URLSearchParams(window.location.search);
+      sp.delete("edit");
+      const qs = sp.toString();
+      router.replace(`/jobs/${jobId}${qs ? `?${qs}` : ""}`, { scroll: false });
+      router.refresh();
+    });
+  }
+
+  const [deleting, startDelete] = useTransition();
+  function handleDelete() {
+    if (
+      !confirm(
+        "Delete this vendor? Their gear will be removed from the load.",
+      )
+    ) {
+      return;
+    }
+    startDelete(async () => {
+      const result = await deleteVendorAction({
+        vendorId: initial.vendorId,
+        jobId,
+      });
+      if (!result.ok) {
+        alert(`Couldn't delete vendor: ${result.error}`);
+        return;
+      }
+      // Closing the editor on the way out - same router.replace
+      // pattern handleDone uses to avoid the scroll-to-top jump.
+      const sp = new URLSearchParams(window.location.search);
+      sp.delete("edit");
+      const qs = sp.toString();
+      router.replace(`/jobs/${jobId}${qs ? `?${qs}` : ""}`, { scroll: false });
       router.refresh();
     });
   }
@@ -268,6 +305,30 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
     () => cases.find((c) => c.id === caseId) ?? null,
     [cases, caseId],
   );
+
+  // Group cases by their category for the <select> render. Uncategorized
+  // org cases get bucketed under a trailing "Other" group.
+  const groupedCases = useMemo(() => {
+    const buckets = new Map<CaseCategory | "__other__", CasePreset[]>();
+    for (const c of cases) {
+      const key: CaseCategory | "__other__" = c.category ?? "__other__";
+      const list = buckets.get(key);
+      if (list) list.push(c);
+      else buckets.set(key, [c]);
+    }
+    const groups: Array<{ label: string; items: CasePreset[] }> = [];
+    for (const cat of CASE_CATEGORY_ORDER) {
+      const items = buckets.get(cat);
+      if (items && items.length > 0) {
+        groups.push({ label: CASE_CATEGORY_LABELS[cat], items });
+      }
+    }
+    const other = buckets.get("__other__");
+    if (other && other.length > 0) {
+      groups.push({ label: "Other", items: other });
+    }
+    return groups;
+  }, [cases]);
 
   const previewInput: VendorInput | null = useMemo(() => {
     const stackOverride: boolean | undefined =
@@ -390,7 +451,7 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
           type="button"
           onClick={handleDone}
           disabled={isLeaving}
-          className="text-[11px] text-[#0e3e7a] hover:text-[#02aed6] transition tracking-wider uppercase font-semibold flex items-center gap-1.5 disabled:opacity-50"
+          className="text-[11px] text-[#0e3e7a] hover:text-[#02aed6] transition-colors duration-150 tracking-wider uppercase font-semibold flex items-center gap-1.5 active:translate-y-[0.5px] disabled:opacity-50 disabled:cursor-wait"
         >
           {isLeaving ? <Loader2 size={12} className="animate-spin" /> : null}
           Done
@@ -425,10 +486,10 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
                 key={m.id}
                 type="button"
                 onClick={() => setInputMethod(m.id)}
-                className={`text-left px-2.5 py-2 rounded border text-xs transition min-h-[44px] ${
+                className={`text-left px-2.5 py-2 rounded border text-xs transition-colors duration-150 min-h-[44px] active:translate-y-[0.5px] ${
                   active
                     ? "bg-[#0e3e7a]/10 border-[#0e3e7a] text-[#0e3e7a]"
-                    : "bg-white border-[#d1d5db] text-[#5a6370] hover:border-[#9ca3af] hover:text-[#272727]"
+                    : "bg-white border-[#d1d5db] text-[#5a6370] hover:border-[#9ca3af] hover:bg-[#f8f9fa] hover:text-[#272727]"
                 }`}
                 title={m.desc}
               >
@@ -536,12 +597,15 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
                 className="w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a]"
               >
                 <option value="">Select case type...</option>
-                {cases.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} &nbsp;·&nbsp;{" "}
-                    {formatDims(c.depthIn, c.widthIn, c.heightIn)} &nbsp;·&nbsp;{" "}
-                    {c.weightLb} lb
-                  </option>
+                {groupedCases.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.items.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label} &nbsp;·&nbsp;{" "}
+                        {formatDims(c.depthIn, c.widthIn, c.heightIn)}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
@@ -690,17 +754,19 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
 
       {/* Footer: delete vendor */}
       <div className="pt-3 border-t border-[#e6e8eb] flex items-center justify-between gap-2">
-        <form action={deleteVendorAction}>
-          <input type="hidden" name="vendorId" value={initial.vendorId} />
-          <input type="hidden" name="jobId" value={jobId} />
-          <button
-            type="submit"
-            className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition tracking-wider uppercase flex items-center gap-1.5"
-          >
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition-colors duration-150 tracking-wider uppercase flex items-center gap-1.5 active:translate-y-[0.5px] disabled:opacity-50 disabled:cursor-wait"
+        >
+          {deleting ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
             <Trash2 size={11} />
-            Delete vendor
-          </button>
-        </form>
+          )}
+          Delete vendor
+        </button>
         <div className="text-[10px] text-[#9ca3af] mono tracking-wider">
           AUTO-SAVED
         </div>
@@ -766,10 +832,10 @@ function TriToggle({
             key={opt.v}
             type="button"
             onClick={() => onChange(opt.v)}
-            className={`flex-1 px-2.5 py-2 text-xs font-medium transition min-h-[40px] ${
+            className={`flex-1 px-2.5 py-2 text-xs font-medium transition-colors duration-150 min-h-[40px] active:translate-y-[0.5px] ${
               active
                 ? "bg-[#0e3e7a] text-white"
-                : "text-[#5a6370] hover:text-[#272727]"
+                : "text-[#5a6370] hover:bg-[#eff1f4] hover:text-[#272727]"
             }`}
           >
             {opt.label}
@@ -796,10 +862,10 @@ function UnitToggle({
             key={u}
             type="button"
             onClick={() => onChange(u)}
-            className={`px-2 py-1 transition ${
+            className={`px-2 py-1 transition-colors duration-150 active:translate-y-[0.5px] ${
               active
                 ? "bg-[#0e3e7a] text-white"
-                : "text-[#5a6370] hover:text-[#272727]"
+                : "text-[#5a6370] hover:bg-[#eff1f4] hover:text-[#272727]"
             }`}
           >
             {u}

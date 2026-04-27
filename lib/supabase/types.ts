@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       case_library: {
         Row: {
+          category: string | null
           created_at: string
           depth_in: number
           height_in: number
@@ -29,6 +30,7 @@ export type Database = {
           width_in: number
         }
         Insert: {
+          category?: string | null
           created_at?: string
           depth_in: number
           height_in: number
@@ -42,6 +44,7 @@ export type Database = {
           width_in: number
         }
         Update: {
+          category?: string | null
           created_at?: string
           depth_in?: number
           height_in?: number
