@@ -481,11 +481,39 @@ export function packLoad(
   // Render in front-to-rear order regardless of insertion order.
   shelves.sort((a, b) => a.startIn - b.startIn);
 
-  const totalLengthIn = shelves.reduce(
-    (max, s) => Math.max(max, s.startIn + s.depthIn),
-    0,
-  );
+  const totalLengthIn = occupiedLengthIn(shelves);
   return { shelves, unplaced, totalLengthIn, totalWeightLb };
+}
+
+// Total length actually occupied by gear, computed by merging the
+// shelves' [startIn, startIn+depthIn] intervals and summing the
+// merged-interval lengths. Gaps between shelves DON'T count - so
+// anchoring an item at the back of the truck no longer makes the
+// front empty space register as "used." Two shelves at the same
+// startIn but different depths overlap and merge to the deeper one.
+function occupiedLengthIn(shelves: Shelf[]): number {
+  if (shelves.length === 0) return 0;
+  // Sort by startIn so we can sweep front-to-back.
+  const sorted = [...shelves].sort((a, b) => a.startIn - b.startIn);
+  let total = 0;
+  let curStart = sorted[0].startIn;
+  let curEnd = sorted[0].startIn + sorted[0].depthIn;
+  for (let i = 1; i < sorted.length; i++) {
+    const s = sorted[i];
+    const sStart = s.startIn;
+    const sEnd = s.startIn + s.depthIn;
+    if (sStart <= curEnd) {
+      // Overlaps or touches - extend the current merged interval.
+      if (sEnd > curEnd) curEnd = sEnd;
+    } else {
+      // Gap - close the current interval and start a new one.
+      total += curEnd - curStart;
+      curStart = sStart;
+      curEnd = sEnd;
+    }
+  }
+  total += curEnd - curStart;
+  return total;
 }
 
 // ----- Convenience wrapper -----------------------------------------------

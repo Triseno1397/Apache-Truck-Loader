@@ -451,8 +451,10 @@ describe("manual placements - drag-anchored items", () => {
     expect(r.shelves[0].groundItems[0].isManual).toBe(true);
     // 10 snaps to 12 (10/6=1.67 -> round to 2 -> 12)
     expect(r.shelves[0].groundItems[0].xIn).toBe(12);
-    // totalLengthIn = startIn + depthIn for the rearmost shelf
-    expect(r.totalLengthIn).toBe(126);
+    // totalLengthIn = sum of OCCUPIED intervals, not rearmost point.
+    // One 48"-deep shelf -> 48 occupied, even though it starts at xIn=78.
+    // The 78" of empty truck IN FRONT of it doesn't count as "used".
+    expect(r.totalLengthIn).toBe(48);
   });
 
   it("auto items share the manual shelf when there's width room, then open new shelf in the front gap", () => {
@@ -481,8 +483,84 @@ describe("manual placements - drag-anchored items", () => {
     expect(manualShelf.groundItems.filter((g) => !g.isManual)).toHaveLength(1);
     expect(autoShelf.groundItems).toHaveLength(1);
     expect(autoShelf.groundItems[0].isManual).toBe(false);
-    // total length = max(autoShelf end, manualShelf end) = max(48, 168) = 168
-    expect(r.totalLengthIn).toBe(168);
+    // totalLengthIn = sum of occupied intervals, gaps don't count.
+    // Two non-overlapping 48"-deep shelves at startIn=0 and startIn=120
+    // -> 48 + 48 = 96 occupied. The 72" gap between them (48..120) is
+    // empty truck and doesn't add to "used".
+    expect(r.totalLengthIn).toBe(96);
+  });
+
+  it("totalLengthIn is the sum of OCCUPIED intervals, not the rearmost point", () => {
+    // The user-reported bug: gear at the back + gear at the front + empty
+    // middle should NOT register as "98% full". Length used = front
+    // shelf depth + back shelf depth, gap is excluded.
+    const r = packVendors(
+      [
+        {
+          id: "front",
+          vendorInput: PALLET_INPUT(2),
+          weightOverride: null,
+          // 2 pallets pinned at the very front
+          manualPlacements: [
+            { xIn: 0, yIn: 0 },
+            { xIn: 0, yIn: 42 },
+          ],
+        },
+        {
+          id: "back",
+          vendorInput: PALLET_INPUT(1),
+          weightOverride: null,
+          // 1 pallet pinned near the back of the 26ft truck (interior 311.04")
+          manualPlacements: [{ xIn: 240, yIn: 0 }],
+        },
+      ],
+      TRUCK_26,
+    );
+    // Front shelf: startIn=0, depth=48 -> occupies [0..48]
+    // Back shelf:  startIn=240, depth=48 -> occupies [240..288]
+    // Gap [48..240] is EMPTY space and must NOT be counted.
+    // Total occupied length = 48 + 48 = 96 inches.
+    expect(r.totalLengthIn).toBe(96);
+  });
+
+  it("overlapping shelves at the same xIn (different depths) merge for length", () => {
+    // Edge case: two manual placements at the same xIn but different
+    // depths each create their own shelf. The shelves overlap. The
+    // merged interval is the deeper one's range, not the sum.
+    const r = packVendors(
+      [
+        {
+          id: "shallow",
+          vendorInput: {
+            method: "dimensions",
+            depthIn: 24,
+            widthIn: 14,
+            heightIn: 9,
+            quantity: 1,
+            stackable: false,
+          },
+          weightOverride: null,
+          manualPlacements: [{ xIn: 60, yIn: 0 }],
+        },
+        {
+          id: "deep",
+          vendorInput: {
+            method: "dimensions",
+            depthIn: 36,
+            widthIn: 14,
+            heightIn: 9,
+            quantity: 1,
+            stackable: false,
+          },
+          weightOverride: null,
+          manualPlacements: [{ xIn: 60, yIn: 30 }],
+        },
+      ],
+      TRUCK_26,
+    );
+    // Two shelves at startIn=60: one depth 24 ([60..84]), one depth 36 ([60..96]).
+    // Merged interval = [60..96], length 36. NOT 24+36=60.
+    expect(r.totalLengthIn).toBe(36);
   });
 
   it("anchoring an item near the back fills the FRONT before pushing past it", () => {
