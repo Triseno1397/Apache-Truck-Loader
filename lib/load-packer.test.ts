@@ -455,10 +455,13 @@ describe("manual placements - drag-anchored items", () => {
     expect(r.totalLengthIn).toBe(126);
   });
 
-  it("auto items share the manual shelf when there's width room, then open new shelf for the rest", () => {
+  it("auto items share the manual shelf when there's width room, then open new shelf in the front gap", () => {
     // 1 pallet manually anchored at xIn=120 yIn=0, plus 2 more pallets auto-packed.
-    // The manual shelf has 97 - 40 = 57in of free width, which fits another
-    // 40in pallet right beside it. The third pallet opens a new shelf at the rear.
+    // - Auto pallet #1 fits in the manual shelf's free width (97-40=57 >= 40).
+    // - Auto pallet #2 has no width room left in the manual shelf, so it
+    //   opens a new shelf in the FRONT gap (0..120, plenty for a 48"-deep
+    //   pallet). This is the smart-fill fix - older code dumped it at the
+    //   rear (startIn=168) even with all that empty length in front.
     const r = packVendors(
       [
         {
@@ -472,13 +475,41 @@ describe("manual placements - drag-anchored items", () => {
     );
     expect(r.shelves).toHaveLength(2);
     const manualShelf = r.shelves.find((s) => s.startIn === 120)!;
-    const autoShelf = r.shelves.find((s) => s.startIn === 168)!;
+    const autoShelf = r.shelves.find((s) => s.startIn === 0)!;
     expect(manualShelf.groundItems).toHaveLength(2);
     expect(manualShelf.groundItems.filter((g) => g.isManual)).toHaveLength(1);
     expect(manualShelf.groundItems.filter((g) => !g.isManual)).toHaveLength(1);
     expect(autoShelf.groundItems).toHaveLength(1);
     expect(autoShelf.groundItems[0].isManual).toBe(false);
-    expect(r.totalLengthIn).toBe(216);
+    // total length = max(autoShelf end, manualShelf end) = max(48, 168) = 168
+    expect(r.totalLengthIn).toBe(168);
+  });
+
+  it("anchoring an item near the back fills the FRONT before pushing past it", () => {
+    // The actual user-reported bug: 1 anchored pallet at the back, plus
+    // 4 more pallets to auto-pack. Old behavior pushed all 4 BEHIND the
+    // manual one (rear-end opens). New behavior fills the front gap first.
+    const r = packVendors(
+      [
+        {
+          id: "p",
+          vendorInput: PALLET_INPUT(5),
+          weightOverride: null,
+          // anchor #1 deep into the truck (240" of a 311" truck)
+          manualPlacements: [{ xIn: 240, yIn: 0 }],
+        },
+      ],
+      TRUCK_26,
+    );
+    // After packing, every shelf's startIn should be < 240 except the
+    // manual one - i.e. nothing got dumped behind the anchor.
+    const startIns = r.shelves.map((s) => s.startIn).sort((a, b) => a - b);
+    const manualShelfStart = 240;
+    expect(startIns).toContain(manualShelfStart);
+    const autoStarts = startIns.filter((s) => s !== manualShelfStart);
+    expect(autoStarts.every((s) => s < manualShelfStart)).toBe(true);
+    // Total length should NOT exceed manualShelf end (240+48=288).
+    expect(r.totalLengthIn).toBeLessThanOrEqual(288);
   });
 
   it("auto item drops into the y-gap left by a manual item in the same shelf", () => {

@@ -323,6 +323,21 @@ function tryFitStacked(
   return null;
 }
 
+// Walk existing shelves front-to-back; return the leftmost xIn where an
+// `itemDepth`-deep new shelf would fit without overlapping any existing
+// shelf. If no front gap is wide enough, fall through to the rear end of
+// the rearmost existing shelf.
+function findFirstFreeRegion(shelves: Shelf[], itemDepth: number): number {
+  const sorted = [...shelves].sort((a, b) => a.startIn - b.startIn);
+  let cursor = 0;
+  for (const shelf of sorted) {
+    const gap = shelf.startIn - cursor;
+    if (gap >= itemDepth) return cursor;
+    cursor = Math.max(cursor, shelf.startIn + shelf.depthIn);
+  }
+  return cursor;
+}
+
 // Find or create a locked shelf for a manually-placed item. Items at the
 // same snapped startIn AND same depth share a shelf; otherwise the manual
 // item gets its own shelf.
@@ -440,14 +455,14 @@ export function packLoad(
     }
 
     if (!placed) {
-      // Open a new shelf at the rearmost end so we don't conflict with
-      // existing (possibly manually-anchored) shelves at lower xIn.
-      const rearEnd = shelves.reduce(
-        (max, s) => Math.max(max, s.startIn + s.depthIn),
-        0,
-      );
+      // Open a new shelf in the first front-to-back GAP big enough for
+      // this item's depth. Without this, anchoring an item near the back
+      // pushes every subsequent auto item behind it - even when there's
+      // tons of empty length in front. Falling back to rear is only the
+      // fallback when no gap is large enough (rare).
+      const startIn = findFirstFreeRegion(shelves, item.depthIn);
       shelves.push({
-        startIn: rearEnd,
+        startIn,
         depthIn: item.depthIn,
         groundItems: [
           {
