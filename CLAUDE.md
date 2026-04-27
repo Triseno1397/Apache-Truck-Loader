@@ -128,13 +128,22 @@ The smart 3D packing logic (width-aware pairing + height-aware stacking) is what
 within the vendor's expansion (item 0..qty-1). Entries are
 `{xIn, yIn}` (truck inches, snapped to a 6" grid) or `null` for
 "auto-pack this item." The packer pre-places anchored items as locked
-shelves at their saved positions, then the existing cross-vendor
-algorithm fills around them with slot-aware ground placement (auto
-items can squeeze into the y-gaps next to manual ones in the same
-shelf). Stacking on top of manually-anchored bases happens
-automatically. Per-truck "Reset placements" in TruckSettingsBar wipes
-every anchor on a truck and falls back to pure auto-pack. Drag is
-top-view only in v1; side view is read-only.
+shelves at their saved positions, then the cross-vendor algorithm
+fills around them with **front-to-back gap-filling** (new shelves open
+in the leftmost free length-region, never behind a manual anchor when
+there's room in front) and slot-aware width placement (auto items can
+squeeze into the y-gaps next to manual ones in the same shelf).
+Stacking on top of manually-anchored bases happens automatically.
+Per-truck "Reset placements" in TruckSettingsBar wipes every anchor on
+a truck and falls back to pure auto-pack. Drag is top-view only;
+side view is read-only.
+
+**Every individual item is draggable**, including stacked items.
+Stacked items render as draggable mini-rects on top of their base;
+dragging one pulls it out of the stack and creates a manual ground
+placement at the drop coords. Drag perf: refs + direct DOM mutation
+(zero React re-renders per pointer-move frame; only one re-render at
+drag start and one at drag end).
 
 ## Multi-truck data model
 

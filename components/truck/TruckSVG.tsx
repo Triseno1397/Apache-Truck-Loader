@@ -8,12 +8,17 @@
 // Box truck (26ft Penske): cab + cargo box are one contiguous shape.
 // Semi (53ft): tractor + 5th-wheel gap + trailer.
 //
-// DRAG: every ground item is draggable. Pick one up, move it anywhere
-// inside the cargo box, drop it. The drop position snaps to a 6" grid
-// and persists via setVendorPlacementAction; the auto-packer re-runs
-// against this new manual anchor on the server, so the page refresh
-// shows the new layout. Stacked items are NOT independently draggable
-// (drag the base instead - stacks rebuild around the moved base).
+// DRAG: every item (ground OR stacked) is independently draggable.
+// Pick one up, move it anywhere inside the cargo box, drop it. The drop
+// snaps to a 6" grid and persists via setVendorPlacementAction. A
+// dropped stacked item leaves the stack and becomes a manual ground
+// placement at the new spot; the auto-packer will rebuild any remaining
+// stack on the next pass.
+//
+// PERF: the drag uses refs + direct DOM mutation. The React tree only
+// re-renders TWICE per drag (start + end). Pointer moves bypass React
+// entirely - the ghost rect's x / y attributes mutate at 60+fps with
+// zero virtual-DOM diffing.
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -42,29 +47,37 @@ function fillColorFor(pct: number): string {
   return "#0e3e7a";
 }
 
-// In-flight drag state. Tracks the item being dragged, the cursor offset
-// inside the rect (so the rect doesn't jump to the cursor on pickup), and
-// the proposed snapped truck-inches position (xIn = along length, yIn =
-// across width). Null when nothing is being dragged.
-type DragState = {
+// Tiny React state for "which item is being dragged" - drives the ghost
+// element's existence in the tree and the source rect's ghost appearance.
+// Only flips on drag start (null -> id) and drag end (id -> null), so we
+// only re-render twice per drag.
+type DragHandle = {
   vendorId: string;
   itemIndex: number;
-  // dimensions of the dragged item, in truck inches
+  // Vendor color for the ghost rect (looked up once at start so the
+  // ghost can render without prop drilling vendorColors)
+  color: string;
+  // Item dimensions used to size the ghost rect
   depthIn: number;
   widthIn: number;
-  // pickup offset inside the item rect, in SVG pixels
+} | null;
+
+// Per-frame data used by direct DOM mutation. Lives in a ref - never
+// triggers a re-render.
+type DragInfo = {
+  vendorId: string;
+  itemIndex: number;
+  depthIn: number;
+  widthIn: number;
+  // pickup offset inside the rect, in SVG pixels
   offsetSvgX: number;
   offsetSvgY: number;
-  // current snapped position (truck inches), recomputed each pointermove
+  // current snapped position (truck inches); mutates each pointermove
   snappedXIn: number;
   snappedYIn: number;
-  // pointer id we captured at pickup (released on drop)
   pointerId: number;
-  // SVG-pixel anchor of the cargo box (passed in so we can convert
-  // pointer coords to truck inches without re-deriving each frame)
   cargoStartX: number;
   cargoY: number;
-  // truck dimensions in inches (for clamping during drag)
   truckLengthIn: number;
   truckWidthIn: number;
 };
@@ -77,7 +90,11 @@ export default function TruckSVG({
 }: Props) {
   const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragInfoRef = useRef<DragInfo | null>(null);
+  const ghostRectRef = useRef<SVGRectElement | null>(null);
+  const ghostHaloRef = useRef<SVGRectElement | null>(null);
+  const ghostTextRef = useRef<SVGTextElement | null>(null);
+  const [dragHandle, setDragHandle] = useState<DragHandle>(null);
   const [saving, startSave] = useTransition();
 
   const truckLengthIn = truck.interiorLengthFt * 12;
@@ -106,20 +123,17 @@ export default function TruckSVG({
     cargoY: number;
   }) {
     const { e, placed, cargoStartX, cargoY } = args;
-    if (placed.layer !== 0) return; // only ground items are draggable
     const svg = svgRef.current;
     if (!svg) return;
     e.stopPropagation();
     e.preventDefault();
     const local = clientToSVG(e.clientX, e.clientY);
     const target = e.currentTarget;
-    // Use the rect's bbox as the source of truth for current position;
-    // it already has the SVG-pixel position the rendering computed.
     const bbox = target.getBBox();
     const offsetSvgX = local.x - bbox.x;
     const offsetSvgY = local.y - bbox.y;
-    // Initial snapped position = where the item is right now (in truck
-    // inches). Keeps the ghost stable until the user actually moves.
+    // Initial snapped position = current item position. For ground items
+    // we use the bbox; for stacked items we infer from the base.
     const initialXIn = clamp(
       Math.round((bbox.x - cargoStartX) / PX_PER_IN / SNAP_IN) * SNAP_IN,
       0,
@@ -132,7 +146,8 @@ export default function TruckSVG({
     );
 
     target.setPointerCapture(e.pointerId);
-    setDrag({
+
+    dragInfoRef.current = {
       vendorId: placed.item.vendorId,
       itemIndex: placed.item.itemIndex,
       depthIn: placed.item.depthIn,
@@ -146,41 +161,69 @@ export default function TruckSVG({
       cargoY,
       truckLengthIn,
       truckWidthIn,
+    };
+    setDragHandle({
+      vendorId: placed.item.vendorId,
+      itemIndex: placed.item.itemIndex,
+      color: vendorColors.get(placed.item.vendorId) ?? "#0e3e7a",
+      depthIn: placed.item.depthIn,
+      widthIn: placed.item.widthIn,
     });
   }
 
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
+    const info = dragInfoRef.current;
+    if (!info || e.pointerId !== info.pointerId) return;
     const local = clientToSVG(e.clientX, e.clientY);
-    // Pointer-relative top-left of the dragged rect (in SVG pixels).
-    const rectTopLeftX = local.x - drag.offsetSvgX;
-    const rectTopLeftY = local.y - drag.offsetSvgY;
-    // Convert to truck inches relative to the cargo box.
-    const rawXIn = (rectTopLeftX - drag.cargoStartX) / PX_PER_IN;
-    const rawYIn = (rectTopLeftY - drag.cargoY) / PX_PER_IN;
-    // Snap, then clamp so the item stays inside the cargo box.
+    const rectTopLeftX = local.x - info.offsetSvgX;
+    const rectTopLeftY = local.y - info.offsetSvgY;
+    const rawXIn = (rectTopLeftX - info.cargoStartX) / PX_PER_IN;
+    const rawYIn = (rectTopLeftY - info.cargoY) / PX_PER_IN;
     const snappedXIn = clamp(
       Math.round(rawXIn / SNAP_IN) * SNAP_IN,
       0,
-      Math.max(0, drag.truckLengthIn - drag.depthIn),
+      Math.max(0, info.truckLengthIn - info.depthIn),
     );
     const snappedYIn = clamp(
       Math.round(rawYIn / SNAP_IN) * SNAP_IN,
       0,
-      Math.max(0, drag.truckWidthIn - drag.widthIn),
+      Math.max(0, info.truckWidthIn - info.widthIn),
     );
-    if (snappedXIn !== drag.snappedXIn || snappedYIn !== drag.snappedYIn) {
-      setDrag({ ...drag, snappedXIn, snappedYIn });
+    if (snappedXIn === info.snappedXIn && snappedYIn === info.snappedYIn) {
+      return;
+    }
+    info.snappedXIn = snappedXIn;
+    info.snappedYIn = snappedYIn;
+
+    // Direct DOM mutation - bypasses React re-render per frame.
+    const ghostX = info.cargoStartX + snappedXIn * PX_PER_IN;
+    const ghostY = info.cargoY + snappedYIn * PX_PER_IN;
+    const w = info.depthIn * PX_PER_IN;
+    const h = info.widthIn * PX_PER_IN;
+    if (ghostRectRef.current) {
+      ghostRectRef.current.setAttribute("x", String(ghostX));
+      ghostRectRef.current.setAttribute("y", String(ghostY));
+    }
+    if (ghostHaloRef.current) {
+      ghostHaloRef.current.setAttribute("x", String(ghostX - 3));
+      ghostHaloRef.current.setAttribute("y", String(ghostY - 3));
+    }
+    if (ghostTextRef.current) {
+      ghostTextRef.current.setAttribute("x", String(ghostX + w / 2));
+      ghostTextRef.current.setAttribute("y", String(ghostY + h / 2 + 3));
+      ghostTextRef.current.textContent = `${Math.round(snappedXIn)}", ${Math.round(snappedYIn)}"`;
     }
   }
 
   function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const finalX = drag.snappedXIn;
-    const finalY = drag.snappedYIn;
-    const vendorId = drag.vendorId;
-    const itemIndex = drag.itemIndex;
-    setDrag(null);
+    const info = dragInfoRef.current;
+    if (!info || e.pointerId !== info.pointerId) return;
+    const finalX = info.snappedXIn;
+    const finalY = info.snappedYIn;
+    const vendorId = info.vendorId;
+    const itemIndex = info.itemIndex;
+    dragInfoRef.current = null;
+    setDragHandle(null);
     startSave(async () => {
       const result = await setVendorPlacementAction({
         vendorId,
@@ -202,7 +245,10 @@ export default function TruckSVG({
         ref={svgRef}
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
         className="w-full h-auto select-none"
-        style={{ maxHeight: "240px", touchAction: drag ? "none" : "auto" }}
+        style={{
+          maxHeight: "240px",
+          touchAction: dragHandle ? "none" : "auto",
+        }}
         role="img"
         aria-label={`${truck.label}, ${(fillPercent * 100).toFixed(0)}% full (top view)`}
         onPointerMove={onPointerMove}
@@ -246,8 +292,11 @@ export default function TruckSVG({
             overColor={overColor}
             vendorColors={vendorColors}
             vendorNames={vendorNames}
-            drag={drag}
+            dragHandle={dragHandle}
             onItemPointerDown={startDrag}
+            ghostRectRef={ghostRectRef}
+            ghostHaloRef={ghostHaloRef}
+            ghostTextRef={ghostTextRef}
           />
         ) : (
           <BoxTruckTopView
@@ -257,8 +306,11 @@ export default function TruckSVG({
             overColor={overColor}
             vendorColors={vendorColors}
             vendorNames={vendorNames}
-            drag={drag}
+            dragHandle={dragHandle}
             onItemPointerDown={startDrag}
+            ghostRectRef={ghostRectRef}
+            ghostHaloRef={ghostHaloRef}
+            ghostTextRef={ghostTextRef}
           />
         )}
       </svg>
@@ -283,13 +335,16 @@ type ShapeProps = {
   overColor: string;
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
-  drag: DragState | null;
+  dragHandle: DragHandle;
   onItemPointerDown: (args: {
     e: React.PointerEvent<SVGRectElement>;
     placed: PlacedItem;
     cargoStartX: number;
     cargoY: number;
   }) => void;
+  ghostRectRef: React.RefObject<SVGRectElement | null>;
+  ghostHaloRef: React.RefObject<SVGRectElement | null>;
+  ghostTextRef: React.RefObject<SVGTextElement | null>;
 };
 
 // ----- 26ft Penske box truck (top view) ----------------------------------
@@ -301,8 +356,11 @@ function BoxTruckTopView({
   overColor,
   vendorColors,
   vendorNames,
-  drag,
+  dragHandle,
   onItemPointerDown,
+  ghostRectRef,
+  ghostHaloRef,
+  ghostTextRef,
 }: ShapeProps) {
   const cargoLengthPx = truck.interiorLengthFt * PX_PER_FT;
   const cargoWidthPx = truck.interiorWidthFt * PX_PER_FT;
@@ -362,7 +420,7 @@ function BoxTruckTopView({
         y={cargoY + 1}
         width={cargoLengthPx - 2}
         height={cargoWidthPx - 2}
-        fill={drag ? "url(#snap-grid)" : "url(#truck-grid)"}
+        fill={dragHandle ? "url(#snap-grid)" : "url(#truck-grid)"}
       />
       {/* Centerline */}
       <line
@@ -380,23 +438,22 @@ function BoxTruckTopView({
         load={load}
         cargoStartX={cargoStartX}
         cargoY={cargoY}
-        cargoWidthPx={cargoWidthPx}
-        truckLengthIn={truck.interiorLengthFt * 12}
-        truckWidthIn={truck.interiorWidthFt * 12}
-        cargoLengthPx={cargoLengthPx}
         vendorColors={vendorColors}
         vendorNames={vendorNames}
-        drag={drag}
+        dragHandle={dragHandle}
         onItemPointerDown={onItemPointerDown}
       />
 
-      {/* Drag ghost - the snapped destination preview */}
-      {drag && (
+      {/* Drag ghost - the snapped destination preview. Lives in the
+          tree only while a drag is in progress (dragHandle != null);
+          its position attributes are mutated directly via refs during
+          pointer move (no React re-render per frame). */}
+      {dragHandle && (
         <DragGhost
-          drag={drag}
-          cargoStartX={cargoStartX}
-          cargoY={cargoY}
-          vendorColors={vendorColors}
+          dragHandle={dragHandle}
+          ghostRectRef={ghostRectRef}
+          ghostHaloRef={ghostHaloRef}
+          ghostTextRef={ghostTextRef}
         />
       )}
 
@@ -458,8 +515,11 @@ function SemiTopView({
   overColor,
   vendorColors,
   vendorNames,
-  drag,
+  dragHandle,
   onItemPointerDown,
+  ghostRectRef,
+  ghostHaloRef,
+  ghostTextRef,
 }: ShapeProps) {
   const trailerLengthPx = truck.interiorLengthFt * PX_PER_FT;
   const trailerWidthPx = truck.interiorWidthFt * PX_PER_FT;
@@ -532,7 +592,7 @@ function SemiTopView({
         y={trailerY + 1}
         width={trailerLengthPx - 2}
         height={trailerWidthPx - 2}
-        fill={drag ? "url(#snap-grid)" : "url(#truck-grid)"}
+        fill={dragHandle ? "url(#snap-grid)" : "url(#truck-grid)"}
       />
       <line
         x1={trailerStartX}
@@ -549,23 +609,19 @@ function SemiTopView({
         load={load}
         cargoStartX={trailerStartX}
         cargoY={trailerY}
-        cargoWidthPx={trailerWidthPx}
-        truckLengthIn={truck.interiorLengthFt * 12}
-        truckWidthIn={truck.interiorWidthFt * 12}
-        cargoLengthPx={trailerLengthPx}
         vendorColors={vendorColors}
         vendorNames={vendorNames}
-        drag={drag}
+        dragHandle={dragHandle}
         onItemPointerDown={onItemPointerDown}
       />
 
       {/* Drag ghost */}
-      {drag && (
+      {dragHandle && (
         <DragGhost
-          drag={drag}
-          cargoStartX={trailerStartX}
-          cargoY={trailerY}
-          vendorColors={vendorColors}
+          dragHandle={dragHandle}
+          ghostRectRef={ghostRectRef}
+          ghostHaloRef={ghostHaloRef}
+          ghostTextRef={ghostTextRef}
         />
       )}
 
@@ -624,58 +680,60 @@ function SemiTopView({
 //
 // A premium-feeling preview rectangle drawn at the snapped destination
 // during a drag. Solid border, tinted fill, drop-shadow halo so it lifts
-// off the cargo floor visually. Uses the dragged item's vendor color.
+// off the cargo floor visually. Position attributes (x / y) are mutated
+// DIRECTLY via refs during pointer move - no React re-render per frame.
 
 function DragGhost({
-  drag,
-  cargoStartX,
-  cargoY,
-  vendorColors,
+  dragHandle,
+  ghostRectRef,
+  ghostHaloRef,
+  ghostTextRef,
 }: {
-  drag: DragState;
-  cargoStartX: number;
-  cargoY: number;
-  vendorColors: Map<string, string>;
+  dragHandle: NonNullable<DragHandle>;
+  ghostRectRef: React.RefObject<SVGRectElement | null>;
+  ghostHaloRef: React.RefObject<SVGRectElement | null>;
+  ghostTextRef: React.RefObject<SVGTextElement | null>;
 }) {
-  const x = cargoStartX + drag.snappedXIn * PX_PER_IN;
-  const y = cargoY + drag.snappedYIn * PX_PER_IN;
-  const w = drag.depthIn * PX_PER_IN;
-  const h = drag.widthIn * PX_PER_IN;
-  const color = vendorColors.get(drag.vendorId) ?? "#0e3e7a";
+  const w = dragHandle.depthIn * PX_PER_IN;
+  const h = dragHandle.widthIn * PX_PER_IN;
+  // Initial x / y are 0 - the first pointermove updates them. (The ghost
+  // appears off-screen for one frame, which the eye doesn't catch.)
   return (
     <g style={{ pointerEvents: "none" }}>
-      {/* Halo / shadow ring */}
       <rect
-        x={x - 3}
-        y={y - 3}
+        ref={ghostHaloRef}
+        x={-9999}
+        y={-9999}
         width={w + 6}
         height={h + 6}
         fill="none"
-        stroke={color}
+        stroke={dragHandle.color}
         strokeOpacity="0.25"
         strokeWidth="3"
         rx="2"
       />
       <rect
-        x={x}
-        y={y}
+        ref={ghostRectRef}
+        x={-9999}
+        y={-9999}
         width={w}
         height={h}
-        fill={color}
+        fill={dragHandle.color}
         fillOpacity="0.85"
-        stroke={color}
+        stroke={dragHandle.color}
         strokeWidth="2"
       />
       <text
-        x={x + w / 2}
-        y={y + h / 2 + 3}
+        ref={ghostTextRef}
+        x={-9999}
+        y={-9999}
         textAnchor="middle"
         fontSize="9"
         fontFamily="JetBrains Mono, monospace"
         fontWeight="700"
         fill="#ffffff"
       >
-        {Math.round(drag.snappedXIn)}&quot;, {Math.round(drag.snappedYIn)}&quot;
+        0&quot;, 0&quot;
       </text>
     </g>
   );
@@ -687,34 +745,19 @@ function PackedItems({
   load,
   cargoStartX,
   cargoY,
-  cargoWidthPx,
-  cargoLengthPx,
-  truckLengthIn,
-  truckWidthIn,
   vendorColors,
   vendorNames,
-  drag,
+  dragHandle,
   onItemPointerDown,
 }: {
   load: LoadResult;
   cargoStartX: number;
   cargoY: number;
-  cargoWidthPx: number;
-  cargoLengthPx: number;
-  truckLengthIn: number;
-  truckWidthIn: number;
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
-  drag: DragState | null;
+  dragHandle: DragHandle;
   onItemPointerDown: ShapeProps["onItemPointerDown"];
 }) {
-  const lengthScale = cargoLengthPx / truckLengthIn;
-  const widthScale = cargoWidthPx / truckWidthIn;
-  // unused vars kept to preserve original signature shape; if linter
-  // complains, drop them.
-  void widthScale;
-  void lengthScale;
-
   return (
     <g style={{ transition: "transform 0.4s ease-out" }}>
       {load.shelves.map((shelf, si) => (
@@ -725,7 +768,7 @@ function PackedItems({
           cargoY={cargoY}
           vendorColors={vendorColors}
           vendorNames={vendorNames}
-          drag={drag}
+          dragHandle={dragHandle}
           onItemPointerDown={onItemPointerDown}
         />
       ))}
@@ -739,7 +782,7 @@ function ShelfGroup({
   cargoY,
   vendorColors,
   vendorNames,
-  drag,
+  dragHandle,
   onItemPointerDown,
 }: {
   shelf: Shelf;
@@ -747,18 +790,27 @@ function ShelfGroup({
   cargoY: number;
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
-  drag: DragState | null;
+  dragHandle: DragHandle;
   onItemPointerDown: ShapeProps["onItemPointerDown"];
 }) {
   // Group every stacked item by the base ground index it sits on so we
-  // can paint a segmented stripe across the top of each base showing
-  // what (and from which vendor) is stacked there.
+  // can render each one as its own draggable mini-rect on top of the
+  // base. Each segment maps to ONE PlacedItem; pointer-down on a
+  // segment drags that specific stacked item out of the stack.
   const stackedByBase = new Map<number, PlacedItem[]>();
   for (const stacked of shelf.stackedItems) {
     if (stacked.baseGroundIndex === null) continue;
     const list = stackedByBase.get(stacked.baseGroundIndex) ?? [];
     list.push(stacked);
     stackedByBase.set(stacked.baseGroundIndex, list);
+  }
+
+  function isDragMatch(placed: PlacedItem): boolean {
+    return (
+      dragHandle !== null &&
+      dragHandle.vendorId === placed.item.vendorId &&
+      dragHandle.itemIndex === placed.item.itemIndex
+    );
   }
 
   return (
@@ -779,47 +831,45 @@ function ShelfGroup({
             ? rawName.slice(0, Math.max(0, maxChars - 1)) + "..."
             : rawName;
 
-        const stripeHeight = Math.min(5, Math.max(3, h * 0.18));
-        const showStripe = stackedCount > 0 && w > 16 && h > 10;
+        // Stacked-item draggable strip across the top edge. Each segment
+        // is its OWN <rect> with onPointerDown - dragging it pulls that
+        // stacked item out and turns it into a manual ground placement
+        // at the drop coords on save.
+        const stripeHeight = Math.min(10, Math.max(7, h * 0.22));
+        const showStripe = stackedCount > 0 && w > 16 && h > 12;
         const segmentW = showStripe ? w / stackedCount : 0;
         const showCount = stackedCount > 0 && w > 22 && h > 14;
 
-        // Hide the rect being dragged from its original spot, but leave a
-        // ghosted outline so it's clear what we're moving.
-        const isBeingDragged =
-          drag !== null &&
-          drag.vendorId === placed.item.vendorId &&
-          drag.itemIndex === placed.item.itemIndex;
-        const fillOpacity = isBeingDragged ? 0.1 : 0.55;
-        const strokeDash = isBeingDragged ? "4 3" : undefined;
+        const isBaseDragged = isDragMatch(placed);
+        const baseFillOpacity = isBaseDragged ? 0.1 : 0.55;
+        const baseStrokeDash = isBaseDragged ? "4 3" : undefined;
 
-        // Manual placements get a subtle pin badge in the top-right of
-        // the rect so the user can see at a glance which items have been
-        // anchored vs. auto-packed.
         const showPin = placed.isManual && w > 18 && h > 12;
 
         return (
           <g key={gi}>
+            {/* Base rect (ground item) - draggable */}
             <rect
               x={x}
               y={y}
               width={w}
               height={h}
               fill={baseColor}
-              fillOpacity={fillOpacity}
+              fillOpacity={baseFillOpacity}
               stroke={baseColor}
               strokeWidth="1"
-              strokeDasharray={strokeDash}
+              strokeDasharray={baseStrokeDash}
               style={{
-                cursor: isBeingDragged ? "grabbing" : "grab",
+                cursor: isBaseDragged ? "grabbing" : "grab",
                 touchAction: "none",
               }}
               onPointerDown={(e) =>
                 onItemPointerDown({ e, placed, cargoStartX, cargoY })
               }
             />
-            {/* Manual-anchor pin (small navy dot top-right) */}
-            {showPin && !isBeingDragged && (
+
+            {/* Manual-anchor pin badge for the base */}
+            {showPin && !isBaseDragged && (
               <circle
                 cx={x + w - 4}
                 cy={y + 4 + (showStripe ? stripeHeight : 0)}
@@ -828,7 +878,9 @@ function ShelfGroup({
                 style={{ pointerEvents: "none" }}
               />
             )}
-            {showName && !isBeingDragged && (
+
+            {/* Vendor name on the base */}
+            {showName && !isBaseDragged && (
               <text
                 x={x + 3}
                 y={y + 10 + (showStripe ? stripeHeight : 0)}
@@ -840,25 +892,49 @@ function ShelfGroup({
                 {displayName}
               </text>
             )}
-            {showStripe && !isBeingDragged &&
+
+            {/* Stacked-item segments - each independently draggable */}
+            {showStripe &&
               stackedItems.map((stk, i) => {
                 const segColor =
                   vendorColors.get(stk.item.vendorId) ?? "#5a6370";
+                const segIsDragged = isDragMatch(stk);
+                const segFillOpacity = segIsDragged ? 0.1 : 1.0;
+                const segStrokeDash = segIsDragged ? "3 2" : undefined;
                 return (
                   <rect
-                    key={i}
+                    key={`stk-${i}`}
                     x={x + i * segmentW}
                     y={y}
                     width={segmentW}
                     height={stripeHeight}
                     fill={segColor}
+                    fillOpacity={segFillOpacity}
                     stroke="#272727"
-                    strokeWidth="0.4"
-                    style={{ pointerEvents: "none" }}
-                  />
+                    strokeWidth="0.5"
+                    strokeDasharray={segStrokeDash}
+                    style={{
+                      cursor: segIsDragged ? "grabbing" : "grab",
+                      touchAction: "none",
+                    }}
+                    onPointerDown={(e) =>
+                      onItemPointerDown({
+                        e,
+                        placed: stk,
+                        cargoStartX,
+                        cargoY,
+                      })
+                    }
+                  >
+                    <title>
+                      Drag to pull this {vendorNames.get(stk.item.vendorId) ?? "item"} off the stack
+                    </title>
+                  </rect>
                 );
               })}
-            {showCount && !isBeingDragged && (
+
+            {/* "+N" badge in the bottom-right corner of the base */}
+            {showCount && !isBaseDragged && (
               <text
                 x={x + w - 3}
                 y={y + h - 3}
