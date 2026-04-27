@@ -20,9 +20,9 @@
 // entirely - the ghost rect's x / y attributes mutate at 60+fps with
 // zero virtual-DOM diffing.
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import type { TruckSpec } from "@/lib/trucks";
 import type { LoadResult, PlacedItem, Shelf } from "@/lib/load-packer";
 import { setVendorPlacementAction } from "@/app/(app)/jobs/[id]/actions";
@@ -62,6 +62,27 @@ type DragHandle = {
   widthIn: number;
 } | null;
 
+// "I just dropped this item HERE; the server hasn't confirmed yet."
+// While set, the matching item is HIDDEN in the regular renderer and
+// an overlay rect is drawn at the pending position. As soon as the
+// server data arrives (load prop changes), this clears and the real
+// render takes over - the user never sees the rect snap to the old
+// position and then to the new one.
+type PendingPlacement = {
+  vendorId: string;
+  itemIndex: number;
+  xIn: number;
+  yIn: number;
+  depthIn: number;
+  widthIn: number;
+  color: string;
+} | null;
+
+type Toast = {
+  message: string;
+  kind: "error" | "info";
+} | null;
+
 // Per-frame data used by direct DOM mutation. Lives in a ref - never
 // triggers a re-render.
 type DragInfo = {
@@ -95,7 +116,24 @@ export default function TruckSVG({
   const ghostHaloRef = useRef<SVGRectElement | null>(null);
   const ghostTextRef = useRef<SVGTextElement | null>(null);
   const [dragHandle, setDragHandle] = useState<DragHandle>(null);
+  const [pendingPlacement, setPendingPlacement] =
+    useState<PendingPlacement>(null);
+  const [toast, setToast] = useState<Toast>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saving, startSave] = useTransition();
+
+  // Clear the optimistic placement as soon as fresh server data arrives
+  // (the load prop changes). Until that moment, the overlay rect at the
+  // pending position is what the user sees.
+  useEffect(() => {
+    setPendingPlacement(null);
+  }, [load]);
+
+  function showToast(message: string, kind: "error" | "info" = "error") {
+    setToast({ message, kind });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }
 
   const truckLengthIn = truck.interiorLengthFt * 12;
   const truckWidthIn = truck.interiorWidthFt * 12;
@@ -179,6 +217,23 @@ export default function TruckSVG({
     const rectTopLeftY = local.y - info.offsetSvgY;
     const rawXIn = (rectTopLeftX - info.cargoStartX) / PX_PER_IN;
     const rawYIn = (rectTopLeftY - info.cargoY) / PX_PER_IN;
+    // Clamp the raw cursor-tracked position so the ghost can't leave
+    // the cargo box. The ghost follows the cursor SMOOTHLY here -
+    // snapping to the 6" grid only happens on drop. The earlier
+    // snap-during-drag was the source of the perceived jitter
+    // (cursor moves continuously but the rect lurches in 6" steps).
+    const smoothXIn = clamp(
+      rawXIn,
+      0,
+      Math.max(0, info.truckLengthIn - info.depthIn),
+    );
+    const smoothYIn = clamp(
+      rawYIn,
+      0,
+      Math.max(0, info.truckWidthIn - info.widthIn),
+    );
+    // Snapped target = where the item will land on release. Stored on
+    // the ref so onPointerUp can read it without re-deriving.
     const snappedXIn = clamp(
       Math.round(rawXIn / SNAP_IN) * SNAP_IN,
       0,
@@ -189,15 +244,12 @@ export default function TruckSVG({
       0,
       Math.max(0, info.truckWidthIn - info.widthIn),
     );
-    if (snappedXIn === info.snappedXIn && snappedYIn === info.snappedYIn) {
-      return;
-    }
     info.snappedXIn = snappedXIn;
     info.snappedYIn = snappedYIn;
 
     // Direct DOM mutation - bypasses React re-render per frame.
-    const ghostX = info.cargoStartX + snappedXIn * PX_PER_IN;
-    const ghostY = info.cargoY + snappedYIn * PX_PER_IN;
+    const ghostX = info.cargoStartX + smoothXIn * PX_PER_IN;
+    const ghostY = info.cargoY + smoothYIn * PX_PER_IN;
     const w = info.depthIn * PX_PER_IN;
     const h = info.widthIn * PX_PER_IN;
     if (ghostRectRef.current) {
@@ -211,6 +263,8 @@ export default function TruckSVG({
     if (ghostTextRef.current) {
       ghostTextRef.current.setAttribute("x", String(ghostX + w / 2));
       ghostTextRef.current.setAttribute("y", String(ghostY + h / 2 + 3));
+      // Text shows the SNAPPED target so the user knows exactly where
+      // release will land, even though the rect itself follows smoothly.
       ghostTextRef.current.textContent = `${Math.round(snappedXIn)}", ${Math.round(snappedYIn)}"`;
     }
   }
@@ -222,7 +276,22 @@ export default function TruckSVG({
     const finalY = info.snappedYIn;
     const vendorId = info.vendorId;
     const itemIndex = info.itemIndex;
+    const depthIn = info.depthIn;
+    const widthIn = info.widthIn;
+    const color = vendorColors.get(vendorId) ?? "#0e3e7a";
     dragInfoRef.current = null;
+    // Set the optimistic overlay BEFORE clearing the drag handle so the
+    // user sees the item land at the new spot in the same frame the
+    // ghost disappears - no perceived delay.
+    setPendingPlacement({
+      vendorId,
+      itemIndex,
+      xIn: finalX,
+      yIn: finalY,
+      depthIn,
+      widthIn,
+      color,
+    });
     setDragHandle(null);
     startSave(async () => {
       const result = await setVendorPlacementAction({
@@ -233,8 +302,11 @@ export default function TruckSVG({
       });
       if (result.ok) {
         router.refresh();
+        // pendingPlacement will clear via the useEffect once `load`
+        // updates with the saved data.
       } else {
-        alert(`Couldn't save placement: ${result.error}`);
+        showToast(result.error || "Couldn't save placement");
+        setPendingPlacement(null); // revert the optimistic preview
       }
     });
   }
@@ -293,6 +365,7 @@ export default function TruckSVG({
             vendorColors={vendorColors}
             vendorNames={vendorNames}
             dragHandle={dragHandle}
+            pendingPlacement={pendingPlacement}
             onItemPointerDown={startDrag}
             ghostRectRef={ghostRectRef}
             ghostHaloRef={ghostHaloRef}
@@ -307,6 +380,7 @@ export default function TruckSVG({
             vendorColors={vendorColors}
             vendorNames={vendorNames}
             dragHandle={dragHandle}
+            pendingPlacement={pendingPlacement}
             onItemPointerDown={startDrag}
             ghostRectRef={ghostRectRef}
             ghostHaloRef={ghostHaloRef}
@@ -314,11 +388,28 @@ export default function TruckSVG({
           />
         )}
       </svg>
+      {/* Save-in-flight indicator - subtle, top-right corner */}
       {saving && (
         <div className="absolute top-2 right-2 flex items-center gap-1.5 text-[10px] text-[#9ca3af] mono tracking-wider bg-white/90 px-2 py-1 rounded border border-[#e6e8eb]">
           <Loader2 size={10} className="animate-spin" />
           SAVING POSITION
         </div>
+      )}
+      {/* Toast - replaces the old alert() popup. Auto-dismisses after
+          4s; click anywhere on it to dismiss early. */}
+      {toast && (
+        <button
+          type="button"
+          onClick={() => setToast(null)}
+          className={`absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium tracking-wide border ${
+            toast.kind === "error"
+              ? "bg-[#dc2626] text-white border-[#dc2626]"
+              : "bg-[#0e3e7a] text-white border-[#0e3e7a]"
+          }`}
+        >
+          {toast.kind === "error" && <AlertTriangle size={12} />}
+          <span className="max-w-[420px] truncate">{toast.message}</span>
+        </button>
       )}
     </div>
   );
@@ -336,6 +427,7 @@ type ShapeProps = {
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
   dragHandle: DragHandle;
+  pendingPlacement: PendingPlacement;
   onItemPointerDown: (args: {
     e: React.PointerEvent<SVGRectElement>;
     placed: PlacedItem;
@@ -357,6 +449,7 @@ function BoxTruckTopView({
   vendorColors,
   vendorNames,
   dragHandle,
+  pendingPlacement,
   onItemPointerDown,
   ghostRectRef,
   ghostHaloRef,
@@ -441,8 +534,20 @@ function BoxTruckTopView({
         vendorColors={vendorColors}
         vendorNames={vendorNames}
         dragHandle={dragHandle}
+        pendingPlacement={pendingPlacement}
         onItemPointerDown={onItemPointerDown}
       />
+
+      {/* Optimistic placement overlay - drawn the instant the user
+          drops, before the server confirms. The matching item is
+          hidden inside PackedItems so we don't show the rect twice. */}
+      {pendingPlacement && (
+        <PendingOverlay
+          pending={pendingPlacement}
+          cargoStartX={cargoStartX}
+          cargoY={cargoY}
+        />
+      )}
 
       {/* Drag ghost - the snapped destination preview. Lives in the
           tree only while a drag is in progress (dragHandle != null);
@@ -516,6 +621,7 @@ function SemiTopView({
   vendorColors,
   vendorNames,
   dragHandle,
+  pendingPlacement,
   onItemPointerDown,
   ghostRectRef,
   ghostHaloRef,
@@ -612,8 +718,17 @@ function SemiTopView({
         vendorColors={vendorColors}
         vendorNames={vendorNames}
         dragHandle={dragHandle}
+        pendingPlacement={pendingPlacement}
         onItemPointerDown={onItemPointerDown}
       />
+
+      {pendingPlacement && (
+        <PendingOverlay
+          pending={pendingPlacement}
+          cargoStartX={trailerStartX}
+          cargoY={trailerY}
+        />
+      )}
 
       {/* Drag ghost */}
       {dragHandle && (
@@ -739,6 +854,49 @@ function DragGhost({
   );
 }
 
+// ----- Optimistic-placement overlay --------------------------------------
+//
+// Drawn at the user's drop position the instant they release, BEFORE
+// the server confirms the save. The matching item is hidden inside
+// PackedItems while pendingPlacement is set, so we don't show two rects
+// for the same item. Cleared automatically when fresh server data
+// arrives (the load prop changes).
+
+function PendingOverlay({
+  pending,
+  cargoStartX,
+  cargoY,
+}: {
+  pending: NonNullable<PendingPlacement>;
+  cargoStartX: number;
+  cargoY: number;
+}) {
+  const x = cargoStartX + pending.xIn * PX_PER_IN;
+  const y = cargoY + pending.yIn * PX_PER_IN;
+  const w = pending.depthIn * PX_PER_IN;
+  const h = pending.widthIn * PX_PER_IN;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        fill={pending.color}
+        fillOpacity="0.55"
+        stroke={pending.color}
+        strokeWidth="1.5"
+      />
+      <circle
+        cx={x + w - 4}
+        cy={y + 4}
+        r="2"
+        fill="#0e3e7a"
+      />
+    </g>
+  );
+}
+
 // ----- Packed items renderer ---------------------------------------------
 
 function PackedItems({
@@ -748,6 +906,7 @@ function PackedItems({
   vendorColors,
   vendorNames,
   dragHandle,
+  pendingPlacement,
   onItemPointerDown,
 }: {
   load: LoadResult;
@@ -756,6 +915,7 @@ function PackedItems({
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
   dragHandle: DragHandle;
+  pendingPlacement: PendingPlacement;
   onItemPointerDown: ShapeProps["onItemPointerDown"];
 }) {
   return (
@@ -769,6 +929,7 @@ function PackedItems({
           vendorColors={vendorColors}
           vendorNames={vendorNames}
           dragHandle={dragHandle}
+          pendingPlacement={pendingPlacement}
           onItemPointerDown={onItemPointerDown}
         />
       ))}
@@ -783,6 +944,7 @@ function ShelfGroup({
   vendorColors,
   vendorNames,
   dragHandle,
+  pendingPlacement,
   onItemPointerDown,
 }: {
   shelf: Shelf;
@@ -791,6 +953,7 @@ function ShelfGroup({
   vendorColors: Map<string, string>;
   vendorNames: Map<string, string>;
   dragHandle: DragHandle;
+  pendingPlacement: PendingPlacement;
   onItemPointerDown: ShapeProps["onItemPointerDown"];
 }) {
   // Group every stacked item by the base ground index it sits on so we
@@ -813,9 +976,21 @@ function ShelfGroup({
     );
   }
 
+  // Items currently rendered by the optimistic overlay must be hidden
+  // here, otherwise the user sees the rect at BOTH the old position
+  // (this render) and the new one (the overlay).
+  function isPendingMatch(placed: PlacedItem): boolean {
+    return (
+      pendingPlacement !== null &&
+      pendingPlacement.vendorId === placed.item.vendorId &&
+      pendingPlacement.itemIndex === placed.item.itemIndex
+    );
+  }
+
   return (
     <>
       {shelf.groundItems.map((placed, gi) => {
+        if (isPendingMatch(placed)) return null;
         const x = cargoStartX + shelf.startIn * PX_PER_IN;
         const y = cargoY + placed.xIn * PX_PER_IN;
         const w = placed.item.depthIn * PX_PER_IN;
@@ -896,6 +1071,7 @@ function ShelfGroup({
             {/* Stacked-item segments - each independently draggable */}
             {showStripe &&
               stackedItems.map((stk, i) => {
+                if (isPendingMatch(stk)) return null;
                 const segColor =
                   vendorColors.get(stk.item.vendorId) ?? "#5a6370";
                 const segIsDragged = isDragMatch(stk);

@@ -13,8 +13,15 @@ import {
   InputDataLinearSchema,
   InputDataPalletsSchema,
   InputDataPiecesSchema,
+  hydrateVendorInput,
   type InputMethod,
 } from "@/lib/vendor-input";
+import { fetchAllCases, buildCaseLookup } from "@/lib/cases";
+import { TRUCK_PRESETS, truckCrossSection } from "@/lib/trucks";
+import {
+  packVendors,
+  type ManualPlacement,
+} from "@/lib/load-packer";
 
 const INPUT_METHODS = [
   "linear",
@@ -409,49 +416,196 @@ export async function setVendorPlacementAction(args: {
   yIn: number;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const parsed = PlacementSchema.safeParse(args);
-  if (!parsed.success) return { ok: false, error: parsed.error.message };
+  if (!parsed.success) {
+    // Surface the FIRST validation issue in plain English instead of
+    // dumping the full ZodError tree, which used to flash up as an
+    // ugly JSON blob in an alert().
+    const first = parsed.error.issues[0];
+    return {
+      ok: false,
+      error: first ? first.message : "Invalid placement",
+    };
+  }
 
   const supabase = createAdminClient();
 
-  // Read current placements, splice in/extend the slot, write back.
-  // JSONB upserts in Supabase are easier with a read-modify-write than
-  // a server-side jsonb_set; the volume is tiny.
-  const { data: vendor, error: readErr } = await supabase
+  // 1. Identify the dragged vendor's job + truck so we can also pin
+  //    every other currently-visible ground item on this truck.
+  //    Without this step, dragging one item makes the auto-packer
+  //    re-run on the rest, which visually shifts unrelated items -
+  //    the "I dragged one but other things moved" complaint.
+  const { data: dragged, error: readErr } = await supabase
     .from("vendors")
-    .select("manual_placements, job_id")
+    .select("id, job_id, job_truck_id")
     .eq("id", parsed.data.vendorId)
     .single();
-  if (readErr || !vendor) {
-    return { ok: false, error: readErr?.message ?? "Vendor not found" };
+  if (readErr || !dragged) {
+    return { ok: false, error: "Vendor not found" };
   }
 
-  const current = Array.isArray(vendor.manual_placements)
-    ? (vendor.manual_placements as Array<{ xIn: number; yIn: number } | null>)
-    : [];
-  // Pad with NULL (not a placeholder anchor) so untouched items stay in
-  // the auto-packer instead of being silently anchored at (0,0). The
-  // packer treats null entries as "no manual placement for this index".
-  while (current.length <= parsed.data.itemIndex) {
-    current.push(null);
-  }
-  current[parsed.data.itemIndex] = {
-    xIn: parsed.data.xIn,
-    yIn: parsed.data.yIn,
+  const truckId = dragged.job_truck_id;
+  const jobId = dragged.job_id;
+
+  // 2. Fetch every vendor on this truck and the truck's spec so we can
+  //    recompute the current ground positions and snapshot them.
+  const [
+    { data: truckVendors, error: tvErr },
+    { data: truckRow, error: trErr },
+    cases,
+  ] = await Promise.all([
+    supabase
+      .from("vendors")
+      .select("*")
+      .eq("job_truck_id", truckId)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("job_trucks")
+      .select("*")
+      .eq("id", truckId)
+      .single(),
+    fetchAllCases(),
+  ]);
+  if (tvErr) return { ok: false, error: tvErr.message };
+  if (trErr || !truckRow) return { ok: false, error: "Truck not found" };
+
+  const caseMap = buildCaseLookup(cases);
+  const truckSpec =
+    truckRow.truck_type === "custom"
+      ? TRUCK_PRESETS["26ft_penske"]
+      : TRUCK_PRESETS[truckRow.truck_type as "26ft_penske" | "53ft_semi"];
+  const truckCS = truckCrossSection(truckSpec);
+
+  // 3. Hydrate vendor inputs and parse existing manual_placements.
+  type Hydrated = {
+    row: (typeof truckVendors)[number];
+    placements: (ManualPlacement | null)[];
   };
+  const hydratedRows: Hydrated[] = (truckVendors ?? []).map((row) => ({
+    row,
+    placements: parseSparsePlacements(row.manual_placements),
+  }));
 
-  const { error: writeErr } = await supabase
-    .from("vendors")
-    .update({ manual_placements: current as Json })
-    .eq("id", parsed.data.vendorId);
-  if (writeErr) return { ok: false, error: writeErr.message };
+  const hydratedInputs = hydratedRows
+    .map((h) => {
+      const inputMethod = h.row.input_method as InputMethod;
+      const hydrated = hydrateVendorInput({
+        inputMethod,
+        inputData: h.row.input_data as unknown,
+        stackable: h.row.stackable,
+        cases: caseMap,
+      });
+      return hydrated === null
+        ? null
+        : {
+            id: h.row.id,
+            vendorInput: hydrated,
+            weightOverride: h.row.weight_lb_override,
+            canBeBase: h.row.can_be_base,
+            manualPlacements: h.placements,
+          };
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null);
+
+  // 4. Run the packer to compute every item's current position.
+  const load = packVendors(hydratedInputs, truckCS);
+
+  // 5. Build a per-vendor map of placements to write. Start from the
+  //    existing manual_placements so anything already anchored stays
+  //    anchored.
+  const updates = new Map<string, (ManualPlacement | null)[]>();
+  for (const h of hydratedRows) {
+    updates.set(h.row.id, [...h.placements]);
+  }
+
+  // 6. Pin every currently-visible AUTO-packed ground item to its
+  //    rendered position. Ignore stacked items (they re-stack on
+  //    pinned bases automatically).
+  for (const shelf of load.shelves) {
+    for (const placed of shelf.groundItems) {
+      if (placed.isManual) continue;
+      const arr = updates.get(placed.item.vendorId);
+      if (!arr) continue;
+      while (arr.length <= placed.item.itemIndex) arr.push(null);
+      arr[placed.item.itemIndex] = {
+        xIn: shelf.startIn,
+        yIn: placed.xIn,
+      };
+    }
+  }
+
+  // 7. Apply the user's drop on top of any auto-pin for the same slot.
+  const draggedArr = updates.get(parsed.data.vendorId);
+  if (draggedArr) {
+    while (draggedArr.length <= parsed.data.itemIndex) draggedArr.push(null);
+    draggedArr[parsed.data.itemIndex] = {
+      xIn: parsed.data.xIn,
+      yIn: parsed.data.yIn,
+    };
+  }
+
+  // 8. Persist every vendor whose placements actually changed. Skip
+  //    rows that match what's already in the DB to avoid pointless
+  //    writes.
+  const dirty = hydratedRows.filter((h) => {
+    const next = updates.get(h.row.id);
+    return next !== undefined && !placementsEqual(h.placements, next);
+  });
+  for (const h of dirty) {
+    const next = updates.get(h.row.id);
+    if (!next) continue;
+    const { error } = await supabase
+      .from("vendors")
+      .update({ manual_placements: next as unknown as Json })
+      .eq("id", h.row.id);
+    if (error) return { ok: false, error: error.message };
+  }
 
   await supabase
     .from("jobs")
     .update({ updated_at: new Date().toISOString() })
-    .eq("id", vendor.job_id);
+    .eq("id", jobId);
 
-  revalidatePath(`/jobs/${vendor.job_id}`);
+  revalidatePath(`/jobs/${jobId}`);
   return { ok: true };
+}
+
+// Defensive parse: returns a sparse array of placements where bad
+// entries become null (which the packer treats as "auto-pack this
+// slot"). Mirrors page.tsx's parseManualPlacements but lives here so
+// the action doesn't depend on a page module.
+function parseSparsePlacements(
+  raw: unknown,
+): (ManualPlacement | null)[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    if (
+      entry &&
+      typeof entry === "object" &&
+      typeof (entry as { xIn?: unknown }).xIn === "number" &&
+      typeof (entry as { yIn?: unknown }).yIn === "number"
+    ) {
+      return {
+        xIn: (entry as { xIn: number }).xIn,
+        yIn: (entry as { yIn: number }).yIn,
+      };
+    }
+    return null;
+  });
+}
+
+function placementsEqual(
+  a: (ManualPlacement | null)[],
+  b: (ManualPlacement | null)[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x === null && y === null) continue;
+    if (x === null || y === null) return false;
+    if (x.xIn !== y.xIn || x.yIn !== y.yIn) return false;
+  }
+  return true;
 }
 
 // Clear every manual placement for every vendor on a single truck. Used

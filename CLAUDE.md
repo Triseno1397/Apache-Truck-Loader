@@ -155,7 +155,27 @@ Stacked items render as draggable mini-rects on top of their base;
 dragging one pulls it out of the stack and creates a manual ground
 placement at the drop coords. Drag perf: refs + direct DOM mutation
 (zero React re-renders per pointer-move frame; only one re-render at
-drag start and one at drag end).
+drag start and one at drag end). The ghost rect follows the cursor
+**smoothly** during drag (no chunky 6" stepping); snap to the 6" grid
+happens only on release. The coordinate badge inside the ghost shows
+the snapped target so the user always knows where release will land.
+
+**Auto-pin sibling items on drag.** When the user drops one item,
+`setVendorPlacementAction` pins every OTHER currently-visible
+auto-packed ground item to its current rendered position before
+applying the user's drop. Without this, the auto-packer would re-run
+on the un-anchored items and visually shift them too - the
+"I dragged one but other things moved" problem. After any drag every
+ground item ends up explicitly anchored; "Reset placements" wipes
+everything back to pure auto-pack. Stacked items stay in the
+auto-packer's hands and rebuild on top of pinned bases.
+
+**Optimistic placement.** On drop the editor renders an immediate
+overlay rect at the snapped position (with the dragged item hidden
+in the regular renderer to avoid duplicates). The server save
+runs in the background; when fresh data arrives via router.refresh
+the overlay clears via a useEffect on the load prop. The user never
+sees the rect snap to its old spot before snapping to the new one.
 
 ## Multi-truck data model
 
