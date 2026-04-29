@@ -1,9 +1,14 @@
+"use client";
+
+import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Box,
   FileText,
   Image as ImageIcon,
   Layers,
+  Loader2,
   Package,
   Ruler,
   Trash2,
@@ -53,6 +58,29 @@ export default function VendorRow({
   truck,
   otherTrucks,
 }: Props) {
+  const router = useRouter();
+  // Optimistic delete: hide the row immediately on click so the page
+  // feels instant even though the server roundtrip + router.refresh()
+  // can take 300-600ms. If the delete fails we surface the row again
+  // and alert the user - matches the rest of the app's "act first,
+  // recover on error" pattern.
+  const [hidden, setHidden] = useState(false);
+  const [deleting, startDelete] = useTransition();
+
+  function handleDelete() {
+    setHidden(true);
+    startDelete(async () => {
+      const result = await deleteVendorAction({ vendorId, jobId });
+      if (!result.ok) {
+        setHidden(false);
+        alert(`Couldn't delete vendor: ${result.error}`);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  if (hidden) return null;
   const Icon = ICON_BY_METHOD[inputMethod];
   const packing = hydrated
     ? computeVendorPacking(hydrated, truck)
@@ -68,7 +96,7 @@ export default function VendorRow({
   })();
 
   return (
-    <div className="bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 hover:border-[#d1d5db] transition group">
+    <div className="bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 hover:border-[#d1d5db] hover:bg-[#eff1f4] transition-colors duration-150 group">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
@@ -116,23 +144,26 @@ export default function VendorRow({
           <div className="flex gap-1 items-center">
             <Link
               href={`/jobs/${jobId}?edit=${vendorId}`}
-              className="text-[#9ca3af] hover:text-[#0e3e7a] p-2 -m-2 transition"
+              scroll={false}
+              className="text-[#9ca3af] hover:text-[#0e3e7a] p-2 -m-2 transition-colors duration-150 active:translate-y-[0.5px]"
               title="Edit"
             >
               <FileText size={14} />
             </Link>
             <MoveVendorMenu vendorId={vendorId} otherTrucks={otherTrucks} />
-            <form action={deleteVendorAction} className="inline">
-              <input type="hidden" name="vendorId" value={vendorId} />
-              <input type="hidden" name="jobId" value={jobId} />
-              <button
-                type="submit"
-                className="text-[#9ca3af] hover:text-[#dc2626] p-2 -m-2 transition"
-                title="Remove"
-              >
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="text-[#9ca3af] hover:text-[#dc2626] p-2 -m-2 transition-colors duration-150 active:translate-y-[0.5px] disabled:opacity-50"
+              title="Remove"
+            >
+              {deleting ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
                 <Trash2 size={14} />
-              </button>
-            </form>
+              )}
+            </button>
           </div>
         </div>
       </div>

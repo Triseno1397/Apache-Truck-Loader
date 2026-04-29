@@ -59,6 +59,8 @@ export default function SnapshotsPanel({ jobId, snapshots }: Props) {
   const [label, setLabel] = useState("");
   const [saving, startSaving] = useTransition();
   const [savedFlash, setSavedFlash] = useState(false);
+  const [restoring, startRestore] = useTransition();
+  const [restoringId, setRestoringId] = useState<string | null>(null);
 
   function commitSave() {
     const trimmed = label.trim();
@@ -80,14 +82,24 @@ export default function SnapshotsPanel({ jobId, snapshots }: Props) {
     });
   }
 
-  function handleRestoreSubmit(e: React.FormEvent<HTMLFormElement>) {
+  function handleRestore(snapshotId: string) {
     if (
       !confirm(
         "Restore this snapshot? The current state will be auto-saved as a new snapshot first so you can return to it.",
       )
     ) {
-      e.preventDefault();
+      return;
     }
+    setRestoringId(snapshotId);
+    startRestore(async () => {
+      const result = await restoreSnapshotAction({ snapshotId, jobId });
+      setRestoringId(null);
+      if (!result.ok) {
+        alert(`Couldn't restore snapshot: ${result.error}`);
+        return;
+      }
+      router.refresh();
+    });
   }
 
   return (
@@ -132,7 +144,7 @@ export default function SnapshotsPanel({ jobId, snapshots }: Props) {
               setSavingForm((v) => !v);
               setExpanded(true);
             }}
-            className="text-[11px] text-[#0e3e7a] hover:text-[#02aed6] transition tracking-wider uppercase font-semibold flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#0e3e7a]/[0.08]"
+            className="text-[11px] text-[#0e3e7a] hover:text-[#02aed6] transition-colors duration-150 tracking-wider uppercase font-semibold flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#0e3e7a]/[0.08] active:translate-y-[0.5px]"
           >
             <Camera size={11} />
             Save snapshot
@@ -168,7 +180,7 @@ export default function SnapshotsPanel({ jobId, snapshots }: Props) {
                 type="button"
                 onClick={commitSave}
                 disabled={saving}
-                className="text-xs bg-[#0e3e7a] text-white font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition min-h-[40px] disabled:opacity-50"
+                className="text-xs bg-[#0e3e7a] text-white font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition-colors duration-150 min-h-[40px] active:translate-y-[0.5px] disabled:opacity-50 disabled:cursor-wait"
               >
                 {saving ? "Saving..." : "Save"}
               </button>
@@ -214,21 +226,20 @@ export default function SnapshotsPanel({ jobId, snapshots }: Props) {
                       </span>
                     </div>
                   </div>
-                  <form
-                    action={restoreSnapshotAction}
-                    onSubmit={handleRestoreSubmit}
+                  <button
+                    type="button"
+                    onClick={() => handleRestore(s.id)}
+                    disabled={restoring}
+                    className="text-[11px] text-[#5a6370] hover:text-[#0e3e7a] transition-colors duration-150 tracking-wider uppercase font-semibold flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#0e3e7a]/[0.06] active:translate-y-[0.5px] disabled:opacity-50 disabled:cursor-wait"
+                    title="Rewind the live job to this snapshot"
                   >
-                    <input type="hidden" name="snapshotId" value={s.id} />
-                    <input type="hidden" name="jobId" value={jobId} />
-                    <button
-                      type="submit"
-                      className="text-[11px] text-[#5a6370] hover:text-[#0e3e7a] transition tracking-wider uppercase font-semibold flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#0e3e7a]/[0.06]"
-                      title="Rewind the live job to this snapshot"
-                    >
+                    {restoringId === s.id ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
                       <RotateCcw size={11} />
-                      Restore
-                    </button>
-                  </form>
+                    )}
+                    Restore
+                  </button>
                 </li>
               ))}
             </ul>

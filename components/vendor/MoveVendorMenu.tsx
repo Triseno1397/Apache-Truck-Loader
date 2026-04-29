@@ -53,7 +53,7 @@ export default function MoveVendorMenu({ vendorId, otherTrucks }: Props) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={moving}
-        className="text-[#9ca3af] hover:text-[#0e3e7a] p-2 -m-2 transition disabled:opacity-50"
+        className="text-[#9ca3af] hover:text-[#0e3e7a] p-2 -m-2 transition-colors duration-150 active:translate-y-[0.5px] disabled:opacity-50"
         title="Move to another truck"
       >
         {moving ? (
@@ -72,7 +72,7 @@ export default function MoveVendorMenu({ vendorId, otherTrucks }: Props) {
               key={t.id}
               type="button"
               onClick={() => moveTo(t.id)}
-              className="w-full text-left px-3 py-2 text-xs text-[#272727] hover:bg-[#eff1f4] transition"
+              className="w-full text-left px-3 py-2 text-xs text-[#272727] hover:bg-[#eff1f4] transition-colors duration-150"
             >
               {t.label}
             </button>

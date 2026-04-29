@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { Package, Plus } from "lucide-react";
+import { Package, Plus, SearchX } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TRUCK_PRESETS } from "@/lib/trucks";
 import { createJobAction } from "./actions";
+import JobsListFilters, {
+  type StatusFilter,
+} from "@/components/job/JobsListFilters";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "DRAFT",
@@ -67,12 +70,59 @@ function summarizeTrucks(trucks: TruckSummary[]): string {
   return `${trucks.length} TRUCKS`;
 }
 
-export default async function JobsPage() {
+type PageProps = {
+  searchParams: Promise<{ q?: string; status?: string }>;
+};
+
+const STATUS_VALUES: ReadonlyArray<StatusFilter> = [
+  "all",
+  "draft",
+  "confirmed",
+  "loaded",
+  "archived",
+];
+
+function normalizeStatus(raw: string | undefined): StatusFilter {
+  if (!raw) return "all";
+  return STATUS_VALUES.includes(raw as StatusFilter)
+    ? (raw as StatusFilter)
+    : "all";
+}
+
+export default async function JobsPage({ searchParams }: PageProps) {
+  const sp = await searchParams;
+  const rawQ = (sp.q ?? "").trim();
+  // The supabase .or() filter uses commas + parens as separators; if a
+  // user types those into the search box they'd break the query. Strip
+  // them - the crew is searching for plain text job names like
+  // "Coachella Mainstage", not regex. Also strip % so users can't
+  // accidentally inject SQL wildcards into ilike.
+  const q = rawQ.replace(/[,()%]/g, " ").trim();
+  const statusFilter = normalizeStatus(sp.status);
+
   const supabase = createAdminClient();
-  const { data: jobs, error } = await supabase
+  let query = supabase
     .from("jobs")
     .select("id, name, client, event_date, status, updated_at")
     .order("updated_at", { ascending: false });
+
+  // Status: an explicit chip narrows to that status; "all" hides
+  // archived from the default list (per spec - archived jobs are
+  // searchable but not in the default view).
+  if (statusFilter === "all") {
+    query = query.neq("status", "archived");
+  } else {
+    query = query.eq("status", statusFilter);
+  }
+
+  if (q) {
+    const wild = `%${q}%`;
+    query = query.or(
+      `name.ilike.${wild},client.ilike.${wild},notes.ilike.${wild}`,
+    );
+  }
+
+  const { data: jobs, error } = await query;
 
   if (error) {
     return (
@@ -101,27 +151,43 @@ export default async function JobsPage() {
     }
   }
 
+  const isFiltered = q !== "" || statusFilter !== "all";
+  // The count line reads differently when filtered ("X of Y matching")
+  // vs unfiltered ("X total"). Skip the second query when nothing is
+  // filtered - the count is just jobs.length in that case.
+  let totalCount = jobs?.length ?? 0;
+  if (isFiltered) {
+    const { count } = await supabase
+      .from("jobs")
+      .select("id", { count: "exact", head: true });
+    totalCount = count ?? 0;
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
-      <div className="flex items-center justify-between mb-4 sm:mb-6 gap-3">
+      <div className="flex items-center justify-between mb-3 sm:mb-4 gap-3">
         <div>
           <h1 className="text-base sm:text-lg font-semibold tracking-tight text-[#0e3e7a]">
             Jobs
           </h1>
           <div className="text-[10px] text-[#9ca3af] mono tracking-wider">
-            {(jobs?.length ?? 0).toString().padStart(2, "0")} TOTAL
+            {isFiltered
+              ? `${(jobs?.length ?? 0).toString().padStart(2, "0")} OF ${totalCount.toString().padStart(2, "0")} MATCHING`
+              : `${totalCount.toString().padStart(2, "0")} TOTAL`}
           </div>
         </div>
         <form action={createJobAction}>
           <button
             type="submit"
-            className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#0e3e7a] text-[#ffffff] font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition min-h-[40px]"
+            className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#0e3e7a] text-[#ffffff] font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition-colors duration-150 min-h-[40px] active:translate-y-[0.5px]"
           >
             <Plus size={14} />
             New job
           </button>
         </form>
       </div>
+
+      <JobsListFilters initialQ={rawQ} currentStatus={statusFilter} />
 
       {jobs && jobs.length > 0 ? (
         <div className="space-y-2">
@@ -132,7 +198,7 @@ export default async function JobsPage() {
               <Link
                 key={job.id}
                 href={`/jobs/${job.id}`}
-                className="block bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 sm:p-4 hover:border-[#0e3e7a] hover:bg-[#0e3e7a]/[0.03] transition group"
+                className="block bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 sm:p-4 hover:border-[#0e3e7a] hover:bg-[#0e3e7a]/[0.03] transition-colors duration-150 active:translate-y-[0.5px] group"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
@@ -159,6 +225,16 @@ export default async function JobsPage() {
               </Link>
             );
           })}
+        </div>
+      ) : isFiltered ? (
+        <div className="border border-dashed border-[#e6e8eb] rounded-md p-10 sm:p-12 text-center">
+          <SearchX size={28} className="mx-auto mb-3 text-[#d1d5db]" />
+          <div className="text-sm text-[#5a6370] mb-1">
+            No jobs match these filters
+          </div>
+          <div className="text-xs text-[#9ca3af]">
+            Try a different search or clear the status filter.
+          </div>
         </div>
       ) : (
         <div className="border border-dashed border-[#e6e8eb] rounded-md p-10 sm:p-12 text-center">

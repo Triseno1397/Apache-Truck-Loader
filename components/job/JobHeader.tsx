@@ -71,6 +71,8 @@ export default function JobHeader({
     commit({ event_date: next });
   }
 
+  // Delete uses a real form submit (the action redirects to /jobs).
+  // We just gate the submit on a confirm() so the user can back out.
   function handleDelete(e: React.FormEvent<HTMLFormElement>) {
     if (
       !confirm(
@@ -162,7 +164,7 @@ export default function JobHeader({
           <input type="hidden" name="jobId" value={jobId} />
           <button
             type="submit"
-            className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition tracking-wider uppercase flex items-center gap-1.5"
+            className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition-colors duration-150 tracking-wider uppercase flex items-center gap-1.5 active:translate-y-[0.5px]"
           >
             <Trash2 size={11} />
             Delete job

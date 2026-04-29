@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Check, Package, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Package } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { TRUCK_PRESETS, truckCrossSection, type TruckSpec } from "@/lib/trucks";
+import {
+  TRUCK_PRESETS,
+  customTruckSpec,
+  truckCrossSection,
+  type CustomTruckRow,
+  type TruckSpec,
+} from "@/lib/trucks";
 import { fetchAllCases, buildCaseLookup } from "@/lib/cases";
 import {
   hydrateVendorInput,
@@ -13,7 +19,7 @@ import {
   type LoadResult,
   type ManualPlacement,
 } from "@/lib/load-packer";
-import { createVendorAction } from "./actions";
+import AddVendorButton from "@/components/vendor/AddVendorButton";
 import JobHeader from "@/components/job/JobHeader";
 import SnapshotsPanel, {
   type SnapshotSummary,
@@ -67,12 +73,18 @@ function parseManualPlacements(raw: unknown): (ManualPlacement | null)[] {
   });
 }
 
-function truckSpecFor(row: JobTruckRow): TruckSpec {
-  // Custom trucks land in a later step (admin UI to define them is not
-  // built yet). For a job_truck row with truck_type='custom', fall back
-  // to 26ft Penske dimensions for math so the page still renders.
+function truckSpecFor(
+  row: JobTruckRow,
+  customs: Map<string, CustomTruckRow>,
+): TruckSpec {
   if (row.truck_type === "custom") {
-    return TRUCK_PRESETS["26ft_penske"];
+    // The DB constraint normally guarantees custom_truck_id is set
+    // when truck_type='custom', but fall back gracefully if a referenced
+    // custom truck was deleted out from under us (shouldn't happen -
+    // delete is blocked by referential pre-check - but defensive anyway).
+    const ref = row.custom_truck_id ? customs.get(row.custom_truck_id) : null;
+    if (!ref) return TRUCK_PRESETS["26ft_penske"];
+    return customTruckSpec(ref);
   }
   return TRUCK_PRESETS[row.truck_type];
 }
@@ -123,6 +135,40 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
     label: r.label,
     sort_order: r.sort_order,
   }));
+
+  // Load any custom_trucks referenced by this job's job_trucks. The
+  // editor used to fall back to 26ft Penske dimensions for custom
+  // trucks; that silently displayed wrong math. Now we resolve the
+  // real interior dims (and the rest of the spec) from the DB.
+  const customTruckIds = Array.from(
+    new Set(
+      trucks
+        .map((t) => t.custom_truck_id)
+        .filter((id): id is string => id !== null),
+    ),
+  );
+  const customTruckById = new Map<string, CustomTruckRow>();
+  if (customTruckIds.length > 0) {
+    const { data: customRows } = await supabase
+      .from("custom_trucks")
+      .select(
+        "id, label, interior_length_ft, interior_width_ft, interior_height_ft, cubic_feet, cargo_weight_lb, has_liftgate, liftgate_lb",
+      )
+      .in("id", customTruckIds);
+    for (const r of customRows ?? []) {
+      customTruckById.set(r.id, {
+        id: r.id,
+        label: r.label,
+        interiorLengthFt: Number(r.interior_length_ft),
+        interiorWidthFt: Number(r.interior_width_ft),
+        interiorHeightFt: Number(r.interior_height_ft),
+        cubicFeet: Number(r.cubic_feet),
+        cargoWeightLb: Number(r.cargo_weight_lb),
+        hasLiftgate: r.has_liftgate,
+        liftgateLb: r.liftgate_lb === null ? null : Number(r.liftgate_lb),
+      });
+    }
+  }
 
   // Build snapshot summaries for the panel. We're already loading the
   // full data blob just to count trucks / vendors - acceptable at the
@@ -184,7 +230,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
   let anyTruckOverCapacity = false;
 
   for (const t of trucks) {
-    const spec = truckSpecFor(t);
+    const spec = truckSpecFor(t, customTruckById);
     truckSpecsById.set(t.id, spec);
     const truckCS = truckCrossSection(spec);
     const vendorsForTruck = allHydrated.filter(
@@ -220,6 +266,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
     return {
       id: t.id,
       truckType: t.truck_type,
+      customTruckId: t.custom_truck_id,
       label: t.label,
       vendorCount: allHydrated.filter((v) => v.row.job_truck_id === t.id).length,
       fillPct: spec.interiorLengthFt > 0 ? lenFt / spec.interiorLengthFt : 0,
@@ -228,6 +275,18 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
         load.totalWeightLb > spec.cargoWeightLb,
     };
   });
+
+  // Full list of custom trucks for the picker. Separate small query so
+  // we can offer trucks that aren't yet referenced by this job, and
+  // it's cheap.
+  const { data: allCustomRows } = await supabase
+    .from("custom_trucks")
+    .select("id, label")
+    .order("label", { ascending: true });
+  const customTruckOptions = (allCustomRows ?? []).map((r) => ({
+    id: r.id,
+    label: r.label,
+  }));
 
   // ----- Active truck context (drives the visualization + vendor list) -----
 
@@ -269,7 +328,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
       <Link
         href="/jobs"
-        className="inline-flex items-center gap-1.5 text-[11px] text-[#9ca3af] hover:text-[#5a6370] transition tracking-wider uppercase mb-3"
+        className="inline-flex items-center gap-1.5 text-[11px] text-[#9ca3af] hover:text-[#5a6370] transition-colors duration-150 tracking-wider uppercase mb-3 active:translate-y-[0.5px]"
       >
         <ArrowLeft size={12} />
         Jobs
@@ -315,6 +374,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
           const placements = parseManualPlacements(v.row.manual_placements);
           return placements.some((p) => p !== null);
         })}
+        customTrucks={customTruckOptions}
       />
 
       {/* Active truck capacity panel */}
@@ -398,17 +458,7 @@ export default async function JobEditorPage({ params, searchParams }: PageProps)
             </span>
           </div>
           {!editId && (
-            <form action={createVendorAction}>
-              <input type="hidden" name="jobId" value={job.id} />
-              <input type="hidden" name="jobTruckId" value={activeTruck.id} />
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 text-xs sm:text-sm bg-[#0e3e7a] text-white font-semibold px-3 py-2 rounded hover:bg-[#02aed6] transition min-h-[40px]"
-              >
-                <Plus size={14} />
-                Add vendor
-              </button>
-            </form>
+            <AddVendorButton jobId={job.id} jobTruckId={activeTruck.id} />
           )}
         </div>
 

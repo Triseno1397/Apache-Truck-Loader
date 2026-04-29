@@ -60,7 +60,7 @@ function ToggleButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold tracking-[0.15em] uppercase transition min-h-[36px] ${
+      className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold tracking-[0.15em] uppercase transition-colors duration-150 min-h-[36px] active:translate-y-[0.5px] ${
         active
           ? "bg-[#0e3e7a] text-white"
           : "text-[#5a6370] hover:text-[#0e3e7a] hover:bg-[#0e3e7a]/[0.04]"

@@ -54,3 +54,37 @@ export function truckCrossSection(
     heightIn: truck.interiorHeightFt * 12,
   };
 }
+
+// Shape of a public.custom_trucks row, in the camelCase the app uses.
+// The DB row has snake_case columns; the consumers (settings page,
+// editor) read those raw and pass the camelCased version through this
+// helper so all downstream code sees a uniform TruckSpec.
+export type CustomTruckRow = {
+  id: string;
+  label: string;
+  interiorLengthFt: number;
+  interiorWidthFt: number;
+  interiorHeightFt: number;
+  cubicFeet: number;
+  cargoWeightLb: number;
+  hasLiftgate: boolean;
+  liftgateLb: number | null;
+};
+
+export function customTruckSpec(row: CustomTruckRow): TruckSpec {
+  return {
+    id: "custom",
+    label: row.label,
+    // shortLabel is shown in compact UI surfaces (tabs, summary chips);
+    // truncate gracefully so a long custom label doesn't break the
+    // tab strip layout.
+    shortLabel: row.label.length > 14 ? `${row.label.slice(0, 13)}…` : row.label,
+    interiorLengthFt: row.interiorLengthFt,
+    interiorWidthFt: row.interiorWidthFt,
+    interiorHeightFt: row.interiorHeightFt,
+    cubicFeet: row.cubicFeet,
+    cargoWeightLb: row.cargoWeightLb,
+    hasLiftgate: row.hasLiftgate,
+    liftgateLb: row.liftgateLb,
+  };
+}

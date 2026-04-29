@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Settings } from "lucide-react";
 import SignOutButton from "@/components/SignOutButton";
 
 export default function Header() {
@@ -31,7 +32,16 @@ export default function Header() {
             </div>
           </Link>
 
-          <SignOutButton />
+          <div className="flex items-center gap-1">
+            <Link
+              href="/settings/cases"
+              title="Case library"
+              className="text-[#9ca3af] hover:text-[#0e3e7a] transition-colors duration-150 p-2 -m-2 active:translate-y-[0.5px]"
+            >
+              <Settings size={14} />
+            </Link>
+            <SignOutButton />
+          </div>
         </div>
       </header>
     </>

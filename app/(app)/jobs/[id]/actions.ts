@@ -3,6 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+
+// NOTE on redirects: the editor used to wrap most destructive
+// actions in <form action={serverAction}> with a trailing redirect().
+// In Next.js 15 a form-action redirect causes a full route navigation
+// that scrolls the window to the top - users on the editor reported
+// "the page jumps every time I click delete / reset / restore". The
+// fix was to flip those actions to return { ok } values and let the
+// client invoke them via useTransition + router.refresh() instead, so
+// the URL never changes and the scroll position stays put. Only
+// deleteJobAction still redirects (it deliberately leaves the page).
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import {
@@ -17,7 +27,13 @@ import {
   type InputMethod,
 } from "@/lib/vendor-input";
 import { fetchAllCases, buildCaseLookup } from "@/lib/cases";
-import { TRUCK_PRESETS, truckCrossSection } from "@/lib/trucks";
+import {
+  TRUCK_PRESETS,
+  customTruckSpec,
+  truckCrossSection,
+  type CustomTruckRow,
+  type TruckSpec,
+} from "@/lib/trucks";
 import {
   packVendors,
   type ManualPlacement,
@@ -183,36 +199,39 @@ export async function updateJobTruckAction(
 // UI surfaces a confirmation that names the vendor count. We block the
 // last truck on a job - a job must always have at least one.
 
-export async function deleteJobTruckAction(formData: FormData): Promise<never> {
-  const jobTruckId = String(formData.get("jobTruckId") ?? "");
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!jobTruckId || !jobId) throw new Error("Missing ids");
+export async function deleteJobTruckAction(args: {
+  jobTruckId: string;
+  jobId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!args.jobTruckId || !args.jobId) {
+    return { ok: false, error: "Missing ids" };
+  }
 
   const supabase = createAdminClient();
 
   const { count, error: countErr } = await supabase
     .from("job_trucks")
     .select("*", { count: "exact", head: true })
-    .eq("job_id", jobId);
-  if (countErr) throw new Error(countErr.message);
+    .eq("job_id", args.jobId);
+  if (countErr) return { ok: false, error: countErr.message };
   if ((count ?? 0) <= 1) {
-    throw new Error("A job must have at least one truck");
+    return { ok: false, error: "A job must have at least one truck" };
   }
 
   const { error } = await supabase
     .from("job_trucks")
     .delete()
-    .eq("id", jobTruckId);
-  if (error) throw new Error(error.message);
+    .eq("id", args.jobTruckId);
+  if (error) return { ok: false, error: error.message };
 
   await supabase
     .from("jobs")
     .update({ updated_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .eq("id", args.jobId);
 
-  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath(`/jobs/${args.jobId}`);
   revalidatePath("/jobs");
-  redirect(`/jobs/${jobId}`);
+  return { ok: true };
 }
 
 // ----- vendor: create (eager, empty) ------------------------------------
@@ -222,33 +241,40 @@ export async function deleteJobTruckAction(formData: FormData): Promise<never> {
 // pinned to a specific truck via jobTruckId (the active tab when the
 // button was clicked).
 
-export async function createVendorAction(formData: FormData): Promise<never> {
-  const jobId = String(formData.get("jobId") ?? "");
-  const jobTruckId = String(formData.get("jobTruckId") ?? "");
-  if (!jobId || !jobTruckId) throw new Error("Missing jobId or jobTruckId");
+export async function createVendorAction(args: {
+  jobId: string;
+  jobTruckId: string;
+}): Promise<
+  { ok: true; vendorId: string } | { ok: false; error: string }
+> {
+  if (!args.jobId || !args.jobTruckId) {
+    return { ok: false, error: "Missing jobId or jobTruckId" };
+  }
 
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("vendors")
     .insert({
-      job_id: jobId,
-      job_truck_id: jobTruckId,
+      job_id: args.jobId,
+      job_truck_id: args.jobTruckId,
       name: "Untitled vendor",
       input_method: "linear",
       input_data: {} as Json,
     })
     .select("id")
     .single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to create vendor");
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? "Failed to create vendor" };
+  }
 
   await supabase
     .from("jobs")
     .update({ updated_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .eq("id", args.jobId);
 
-  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath(`/jobs/${args.jobId}`);
   revalidatePath("/jobs");
-  redirect(`/jobs/${jobId}?truck=${jobTruckId}&edit=${data.id}`);
+  return { ok: true, vendorId: data.id };
 }
 
 // ----- vendor: move to a different truck --------------------------------
@@ -469,10 +495,7 @@ export async function setVendorPlacementAction(args: {
   if (trErr || !truckRow) return { ok: false, error: "Truck not found" };
 
   const caseMap = buildCaseLookup(cases);
-  const truckSpec =
-    truckRow.truck_type === "custom"
-      ? TRUCK_PRESETS["26ft_penske"]
-      : TRUCK_PRESETS[truckRow.truck_type as "26ft_penske" | "53ft_semi"];
+  const truckSpec = await resolveTruckSpec(truckRow);
   const truckCS = truckCrossSection(truckSpec);
 
   // 3. Hydrate vendor inputs and parse existing manual_placements.
@@ -569,6 +592,43 @@ export async function setVendorPlacementAction(args: {
   return { ok: true };
 }
 
+// Resolve a job_truck row to the right TruckSpec. For custom trucks
+// we have to look up the referenced custom_trucks row at request time
+// so the packer uses the operator-defined dims rather than silently
+// falling back to 26ft Penske.
+async function resolveTruckSpec(truckRow: {
+  truck_type: string;
+  custom_truck_id: string | null;
+}): Promise<TruckSpec> {
+  if (truckRow.truck_type !== "custom") {
+    return TRUCK_PRESETS[truckRow.truck_type as "26ft_penske" | "53ft_semi"];
+  }
+  if (!truckRow.custom_truck_id) return TRUCK_PRESETS["26ft_penske"];
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("custom_trucks")
+    .select(
+      "id, label, interior_length_ft, interior_width_ft, interior_height_ft, cubic_feet, cargo_weight_lb, has_liftgate, liftgate_lb",
+    )
+    .eq("id", truckRow.custom_truck_id)
+    .single();
+  if (error || !data) return TRUCK_PRESETS["26ft_penske"];
+
+  const row: CustomTruckRow = {
+    id: data.id,
+    label: data.label,
+    interiorLengthFt: Number(data.interior_length_ft),
+    interiorWidthFt: Number(data.interior_width_ft),
+    interiorHeightFt: Number(data.interior_height_ft),
+    cubicFeet: Number(data.cubic_feet),
+    cargoWeightLb: Number(data.cargo_weight_lb),
+    hasLiftgate: data.has_liftgate,
+    liftgateLb: data.liftgate_lb === null ? null : Number(data.liftgate_lb),
+  };
+  return customTruckSpec(row);
+}
+
 // Defensive parse: returns a sparse array of placements where bad
 // entries become null (which the packer treats as "auto-pack this
 // slot"). Mirrors page.tsx's parseManualPlacements but lives here so
@@ -611,48 +671,55 @@ function placementsEqual(
 // Clear every manual placement for every vendor on a single truck. Used
 // by the per-truck "Reset placements" affordance to fall back to pure
 // auto-packing.
-export async function clearTruckPlacementsAction(
-  formData: FormData,
-): Promise<never> {
-  const jobTruckId = String(formData.get("jobTruckId") ?? "");
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!jobTruckId || !jobId) throw new Error("Missing ids");
+export async function clearTruckPlacementsAction(args: {
+  jobTruckId: string;
+  jobId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!args.jobTruckId || !args.jobId) {
+    return { ok: false, error: "Missing ids" };
+  }
 
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("vendors")
     .update({ manual_placements: [] as unknown as Json })
-    .eq("job_truck_id", jobTruckId);
-  if (error) throw new Error(error.message);
+    .eq("job_truck_id", args.jobTruckId);
+  if (error) return { ok: false, error: error.message };
 
   await supabase
     .from("jobs")
     .update({ updated_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .eq("id", args.jobId);
 
-  revalidatePath(`/jobs/${jobId}`);
-  redirect(`/jobs/${jobId}?truck=${jobTruckId}`);
+  revalidatePath(`/jobs/${args.jobId}`);
+  return { ok: true };
 }
 
 // ----- vendor: delete ---------------------------------------------------
 
-export async function deleteVendorAction(formData: FormData): Promise<never> {
-  const vendorId = String(formData.get("vendorId") ?? "");
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!vendorId || !jobId) throw new Error("Missing ids");
+export async function deleteVendorAction(args: {
+  vendorId: string;
+  jobId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!args.vendorId || !args.jobId) {
+    return { ok: false, error: "Missing ids" };
+  }
 
   const supabase = createAdminClient();
-  const { error } = await supabase.from("vendors").delete().eq("id", vendorId);
-  if (error) throw new Error(error.message);
+  const { error } = await supabase
+    .from("vendors")
+    .delete()
+    .eq("id", args.vendorId);
+  if (error) return { ok: false, error: error.message };
 
   await supabase
     .from("jobs")
     .update({ updated_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .eq("id", args.jobId);
 
-  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath(`/jobs/${args.jobId}`);
   revalidatePath("/jobs");
-  redirect(`/jobs/${jobId}`);
+  return { ok: true };
 }
 
 export async function deleteJobAction(formData: FormData): Promise<never> {
@@ -808,103 +875,118 @@ export async function createSnapshotAction(args: {
 // every current truck + vendor and re-inserts from the blob. This is
 // not a single SQL transaction - if it fails midway the auto-snapshot
 // is the recovery path.
-export async function restoreSnapshotAction(
-  formData: FormData,
-): Promise<never> {
-  const snapshotId = String(formData.get("snapshotId") ?? "");
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!snapshotId || !jobId) throw new Error("Missing ids");
+export async function restoreSnapshotAction(args: {
+  snapshotId: string;
+  jobId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!args.snapshotId || !args.jobId) {
+    return { ok: false, error: "Missing ids" };
+  }
+  const { snapshotId, jobId } = args;
 
   const supabase = createAdminClient();
 
-  // 1. Read the snapshot blob.
-  const { data: snap, error: snapErr } = await supabase
-    .from("job_snapshots")
-    .select("data, label, created_at")
-    .eq("id", snapshotId)
-    .single();
-  if (snapErr || !snap) throw new Error(snapErr?.message ?? "Snapshot not found");
-  const blob = snap.data as unknown as SnapshotBlob;
-  if (!blob || blob.version !== SNAPSHOT_VERSION) {
-    throw new Error("Unsupported snapshot version");
-  }
-
-  // 2. Auto-snapshot the current state for reversibility. Label it so
-  //    the user can find it.
-  const auto = await captureSnapshot(jobId);
-  const restoreLabel = `Auto-saved before restoring "${snap.label ?? new Date(snap.created_at).toLocaleString()}"`;
-  await supabase.from("job_snapshots").insert({
-    job_id: jobId,
-    label: restoreLabel,
-    data: auto as unknown as Json,
-  });
-
-  // 3. Delete current trucks (cascades to vendors via FK on delete).
-  const { error: delErr } = await supabase
-    .from("job_trucks")
-    .delete()
-    .eq("job_id", jobId);
-  if (delErr) throw new Error(delErr.message);
-
-  // 4. Update job-level fields.
-  await supabase
-    .from("jobs")
-    .update({
-      name: blob.job.name,
-      client: blob.job.client,
-      event_date: blob.job.event_date,
-      status: blob.job.status,
-      notes: blob.job.notes,
-    })
-    .eq("id", jobId);
-
-  // 5. Re-create trucks. Capture the new IDs in order so vendors can
-  //    resolve their job_truck_id by index.
-  const truckIds: string[] = [];
-  for (const t of blob.trucks) {
-    const { data, error } = await supabase
-      .from("job_trucks")
-      .insert({
-        job_id: jobId,
-        truck_type: t.truck_type,
-        custom_truck_id:
-          t.truck_type === "custom" ? t.custom_truck_id : null,
-        label: t.label,
-        sort_order: t.sort_order,
-      })
-      .select("id")
+  try {
+    // 1. Read the snapshot blob.
+    const { data: snap, error: snapErr } = await supabase
+      .from("job_snapshots")
+      .select("data, label, created_at")
+      .eq("id", snapshotId)
       .single();
-    if (error || !data) throw new Error(error?.message ?? "Truck insert failed");
-    truckIds.push(data.id);
-  }
+    if (snapErr || !snap) {
+      return { ok: false, error: snapErr?.message ?? "Snapshot not found" };
+    }
+    const blob = snap.data as unknown as SnapshotBlob;
+    if (!blob || blob.version !== SNAPSHOT_VERSION) {
+      return { ok: false, error: "Unsupported snapshot version" };
+    }
 
-  // 6. Re-create vendors, mapping job_truck_idx -> the freshly-minted
-  //    truck IDs.
-  if (blob.vendors.length > 0) {
-    const vendorRows = blob.vendors.map((v) => ({
+    // 2. Auto-snapshot the current state for reversibility. Label it so
+    //    the user can find it.
+    const auto = await captureSnapshot(jobId);
+    const restoreLabel = `Auto-saved before restoring "${snap.label ?? new Date(snap.created_at).toLocaleString()}"`;
+    await supabase.from("job_snapshots").insert({
       job_id: jobId,
-      job_truck_id:
-        truckIds[v.job_truck_idx] ?? truckIds[0] ?? truckIds[truckIds.length - 1],
-      name: v.name,
-      input_method: v.input_method,
-      input_data: v.input_data as Json,
-      stackable: v.stackable,
-      can_be_base: v.can_be_base,
-      weight_lb_override: v.weight_lb_override,
-      notes: v.notes,
-      manual_placements: v.manual_placements as unknown as Json,
-    }));
-    const { error: vErr } = await supabase.from("vendors").insert(vendorRows);
-    if (vErr) throw new Error(vErr.message);
+      label: restoreLabel,
+      data: auto as unknown as Json,
+    });
+
+    // 3. Delete current trucks (cascades to vendors via FK on delete).
+    const { error: delErr } = await supabase
+      .from("job_trucks")
+      .delete()
+      .eq("job_id", jobId);
+    if (delErr) return { ok: false, error: delErr.message };
+
+    // 4. Update job-level fields.
+    await supabase
+      .from("jobs")
+      .update({
+        name: blob.job.name,
+        client: blob.job.client,
+        event_date: blob.job.event_date,
+        status: blob.job.status,
+        notes: blob.job.notes,
+      })
+      .eq("id", jobId);
+
+    // 5. Re-create trucks. Capture the new IDs in order so vendors can
+    //    resolve their job_truck_id by index.
+    const truckIds: string[] = [];
+    for (const t of blob.trucks) {
+      const { data, error } = await supabase
+        .from("job_trucks")
+        .insert({
+          job_id: jobId,
+          truck_type: t.truck_type,
+          custom_truck_id:
+            t.truck_type === "custom" ? t.custom_truck_id : null,
+          label: t.label,
+          sort_order: t.sort_order,
+        })
+        .select("id")
+        .single();
+      if (error || !data) {
+        return { ok: false, error: error?.message ?? "Truck insert failed" };
+      }
+      truckIds.push(data.id);
+    }
+
+    // 6. Re-create vendors, mapping job_truck_idx -> the freshly-minted
+    //    truck IDs.
+    if (blob.vendors.length > 0) {
+      const vendorRows = blob.vendors.map((v) => ({
+        job_id: jobId,
+        job_truck_id:
+          truckIds[v.job_truck_idx] ??
+          truckIds[0] ??
+          truckIds[truckIds.length - 1],
+        name: v.name,
+        input_method: v.input_method,
+        input_data: v.input_data as Json,
+        stackable: v.stackable,
+        can_be_base: v.can_be_base,
+        weight_lb_override: v.weight_lb_override,
+        notes: v.notes,
+        manual_placements: v.manual_placements as unknown as Json,
+      }));
+      const { error: vErr } = await supabase.from("vendors").insert(vendorRows);
+      if (vErr) return { ok: false, error: vErr.message };
+    }
+
+    // 7. Touch updated_at so the jobs list reflects the change.
+    await supabase
+      .from("jobs")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", jobId);
+
+    revalidatePath(`/jobs/${jobId}`);
+    revalidatePath("/jobs");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Restore failed",
+    };
   }
-
-  // 7. Touch updated_at so the jobs list reflects the change.
-  await supabase
-    .from("jobs")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", jobId);
-
-  revalidatePath(`/jobs/${jobId}`);
-  revalidatePath("/jobs");
-  redirect(`/jobs/${jobId}`);
 }
