@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Printer, Trash2 } from "lucide-react";
 import {
   deleteJobAction,
   updateJobAction,
@@ -159,7 +160,15 @@ export default function JobHeader({
         </div>
       </div>
 
-      <div className="mt-4 pt-3 border-t border-[#e6e8eb] flex justify-end">
+      <div className="mt-4 pt-3 border-t border-[#e6e8eb] flex justify-between items-center gap-2">
+        <Link
+          href={`/jobs/${jobId}/print`}
+          className="text-[11px] text-[#5a6370] hover:text-[#0e3e7a] transition-colors duration-150 tracking-wider uppercase font-medium flex items-center gap-1.5 px-2 py-1 -ml-2 rounded hover:bg-[#0e3e7a]/[0.06] active:translate-y-[0.5px]"
+          title="Open the printable load plan"
+        >
+          <Printer size={11} />
+          Print / Export
+        </Link>
         <form action={deleteJobAction} onSubmit={handleDelete}>
           <input type="hidden" name="jobId" value={jobId} />
           <button

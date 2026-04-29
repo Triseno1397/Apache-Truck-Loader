@@ -6,9 +6,10 @@ import SignOutButton from "@/components/SignOutButton";
 export default function Header() {
   return (
     <>
-      {/* Navy brand strip - thin accent across the very top of every page */}
-      <div className="h-1 bg-[#0e3e7a]" />
-      <header className="border-b border-[#e6e8eb] bg-[#ffffff] sticky top-0 z-10">
+      {/* Navy brand strip - thin accent across the very top of every page.
+          print:hidden because it doesn't belong on a printed load plan. */}
+      <div className="h-1 bg-[#0e3e7a] print:hidden" />
+      <header className="border-b border-[#e6e8eb] bg-[#ffffff] sticky top-0 z-10 print:hidden">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           <Link
             href="/jobs"
