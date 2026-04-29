@@ -607,6 +607,17 @@ function BoxTruckTopView({
       >
         {(fillPercent * 100).toFixed(0)}%
       </text>
+      <text
+        x={(cargoStartX + cargoEndX) / 2}
+        y={cargoY - 8}
+        textAnchor="middle"
+        fill="#9ca3af"
+        fontSize="8"
+        fontFamily="JetBrains Mono, monospace"
+        letterSpacing="1.5"
+      >
+        LENGTH USED
+      </text>
     </>
   );
 }
@@ -786,6 +797,17 @@ function SemiTopView({
         fontWeight="700"
       >
         {(fillPercent * 100).toFixed(0)}%
+      </text>
+      <text
+        x={(trailerStartX + trailerEndX) / 2}
+        y={trailerY - 8}
+        textAnchor="middle"
+        fill="#9ca3af"
+        fontSize="8"
+        fontFamily="JetBrains Mono, monospace"
+        letterSpacing="1.5"
+      >
+        LENGTH USED
       </text>
     </>
   );
@@ -1109,20 +1131,35 @@ function ShelfGroup({
                 );
               })}
 
-            {/* "+N" badge in the bottom-right corner of the base */}
+            {/* Stack-height badge in the top-right - shows the TOTAL
+                count of items in this column (base + stacked), so the
+                user can tell at a glance that "3 visible rects = 6
+                cases" because each one is x2-stacked. Used to be a
+                tiny "+N" text in the corner that was easy to miss. */}
             {showCount && !isBaseDragged && (
-              <text
-                x={x + w - 3}
-                y={y + h - 3}
-                textAnchor="end"
-                fontSize="9"
-                fontFamily="JetBrains Mono, monospace"
-                fontWeight="700"
-                fill="#272727"
-                style={{ pointerEvents: "none" }}
-              >
-                +{stackedCount}
-              </text>
+              <g style={{ pointerEvents: "none" }}>
+                <rect
+                  x={x + w - 22}
+                  y={y + (showStripe ? stripeHeight + 1 : 2)}
+                  width={20}
+                  height={12}
+                  rx={2}
+                  fill="white"
+                  stroke={baseColor}
+                  strokeWidth="1"
+                />
+                <text
+                  x={x + w - 12}
+                  y={y + (showStripe ? stripeHeight + 1 : 2) + 9}
+                  textAnchor="middle"
+                  fontSize="9"
+                  fontFamily="JetBrains Mono, monospace"
+                  fontWeight="700"
+                  fill={baseColor}
+                >
+                  ×{stackedCount + 1}
+                </text>
+              </g>
             )}
           </g>
         );

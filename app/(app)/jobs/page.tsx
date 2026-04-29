@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Package, Plus, SearchX } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TRUCK_PRESETS } from "@/lib/trucks";
@@ -6,20 +5,7 @@ import { createJobAction } from "./actions";
 import JobsListFilters, {
   type StatusFilter,
 } from "@/components/job/JobsListFilters";
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: "DRAFT",
-  confirmed: "CONFIRMED",
-  loaded: "LOADED",
-  archived: "ARCHIVED",
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  draft: "text-[#5a6370] border-[#d1d5db]",
-  confirmed: "text-[#0e3e7a] border-[#0e3e7a]/30",
-  loaded: "text-[#16a34a] border-[#16a34a]/30",
-  archived: "text-[#9ca3af] border-[#e6e8eb]",
-};
+import JobCard from "@/components/job/JobCard";
 
 function formatDate(date: string | null): string {
   if (!date) return "-";
@@ -193,36 +179,21 @@ export default async function JobsPage({ searchParams }: PageProps) {
         <div className="space-y-2">
           {jobs.map((job) => {
             const truckLabel = summarizeTrucks(trucksByJob.get(job.id) ?? []);
-            const statusKey = job.status ?? "draft";
             return (
-              <Link
+              <JobCard
                 key={job.id}
-                href={`/jobs/${job.id}`}
-                className="block bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 sm:p-4 hover:border-[#0e3e7a] hover:bg-[#0e3e7a]/[0.03] transition-colors duration-150 active:translate-y-[0.5px] group"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2 mb-1">
-                      <div className="text-sm font-semibold text-[#0e3e7a] truncate">
-                        {job.name}
-                      </div>
-                      <span
-                        className={`text-[9px] mono tracking-wider border rounded px-1.5 py-[1px] ${STATUS_COLORS[statusKey]}`}
-                      >
-                        {STATUS_LABELS[statusKey]}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[#5a6370] mono tracking-wide">
-                      {job.client && <span>{job.client}</span>}
-                      <span>{truckLabel}</span>
-                      <span>{formatDate(job.event_date)}</span>
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-[#9ca3af] mono tracking-wider whitespace-nowrap">
-                    {relativeTime(job.updated_at)}
-                  </div>
-                </div>
-              </Link>
+                job={{
+                  id: job.id,
+                  name: job.name,
+                  client: job.client,
+                  event_date: job.event_date,
+                  status: job.status,
+                  updated_at: job.updated_at,
+                }}
+                truckLabel={truckLabel}
+                formattedDate={formatDate(job.event_date)}
+                relativeTime={relativeTime(job.updated_at)}
+              />
             );
           })}
         </div>

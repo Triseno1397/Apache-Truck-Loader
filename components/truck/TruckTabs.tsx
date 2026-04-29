@@ -62,7 +62,16 @@ export default function TruckTabs({ jobId, trucks, activeTruckId }: Props) {
     const sp = new URLSearchParams(searchParams.toString());
     sp.set("truck", truckId);
     sp.delete("edit"); // close any open vendor editor when switching trucks
+    // Belt-and-suspenders scroll preservation: { scroll: false } already
+    // tells Next not to scroll on the navigation, but the server re-render
+    // that follows can change content height and the browser may snap the
+    // viewport. Capture scrollY and restore on the next paint so the user
+    // stays put.
+    const savedY = window.scrollY;
     router.replace(`/jobs/${jobId}?${sp.toString()}`, { scroll: false });
+    requestAnimationFrame(() => {
+      if (window.scrollY !== savedY) window.scrollTo(0, savedY);
+    });
   }
 
   function handleAdd() {
@@ -199,12 +208,20 @@ export function TruckSettingsBar({
   const [savedFlash, setSavedFlash] = useState(false);
 
   function commit(patch: Parameters<typeof updateJobTruckAction>[1]) {
+    const savedY = window.scrollY;
     startSaving(async () => {
       const result = await updateJobTruckAction(truck.id, patch);
       if (result.ok) {
         setSavedFlash(true);
         setTimeout(() => setSavedFlash(false), 1200);
         router.refresh();
+        // router.refresh() re-streams the server tree; if any of the
+        // re-rendered subtrees changes height the browser can snap the
+        // viewport. Restore scroll on next paint and one more tick later
+        // since the RSC stream can finish slightly after the first frame.
+        requestAnimationFrame(() => {
+          if (window.scrollY !== savedY) window.scrollTo(0, savedY);
+        });
       } else {
         alert(`Couldn't save: ${result.error}`);
       }

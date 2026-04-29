@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 
 // NOTE on redirects: the editor used to wrap most destructive
@@ -722,16 +721,20 @@ export async function deleteVendorAction(args: {
   return { ok: true };
 }
 
-export async function deleteJobAction(formData: FormData): Promise<never> {
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!jobId) throw new Error("Missing jobId");
+export async function deleteJobAction(args: {
+  jobId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!args.jobId) return { ok: false, error: "Missing jobId" };
 
   const supabase = createAdminClient();
-  const { error } = await supabase.from("jobs").delete().eq("id", jobId);
-  if (error) throw new Error(error.message);
+  const { error } = await supabase
+    .from("jobs")
+    .delete()
+    .eq("id", args.jobId);
+  if (error) return { ok: false, error: error.message };
 
   revalidatePath("/jobs");
-  redirect("/jobs");
+  return { ok: true };
 }
 
 // ----- snapshots --------------------------------------------------------

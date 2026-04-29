@@ -72,16 +72,27 @@ export default function JobHeader({
     commit({ event_date: next });
   }
 
-  // Delete uses a real form submit (the action redirects to /jobs).
-  // We just gate the submit on a confirm() so the user can back out.
-  function handleDelete(e: React.FormEvent<HTMLFormElement>) {
+  const [deleting, startDelete] = useTransition();
+
+  function handleDelete() {
     if (
       !confirm(
         "Delete this job and all its vendors? This is permanent.",
       )
     ) {
-      e.preventDefault();
+      return;
     }
+    startDelete(async () => {
+      const result = await deleteJobAction({ jobId });
+      if (!result.ok) {
+        alert(`Couldn't delete job: ${result.error}`);
+        return;
+      }
+      // Leave the editor - the job is gone. router.push lets us land
+      // on the jobs list without a full page reload.
+      router.push("/jobs");
+      router.refresh();
+    });
   }
 
   return (
@@ -169,16 +180,19 @@ export default function JobHeader({
           <Printer size={11} />
           Print / Export
         </Link>
-        <form action={deleteJobAction} onSubmit={handleDelete}>
-          <input type="hidden" name="jobId" value={jobId} />
-          <button
-            type="submit"
-            className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition-colors duration-150 tracking-wider uppercase flex items-center gap-1.5 active:translate-y-[0.5px]"
-          >
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          className="text-[11px] text-[#9ca3af] hover:text-[#dc2626] transition-colors duration-150 tracking-wider uppercase flex items-center gap-1.5 active:translate-y-[0.5px] disabled:opacity-50 disabled:cursor-wait"
+        >
+          {deleting ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
             <Trash2 size={11} />
-            Delete job
-          </button>
-        </form>
+          )}
+          Delete job
+        </button>
       </div>
     </div>
   );

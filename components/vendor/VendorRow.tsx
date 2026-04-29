@@ -1,15 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Box,
-  FileText,
   Image as ImageIcon,
   Layers,
   Loader2,
   Package,
+  Pencil,
   Ruler,
   Trash2,
 } from "lucide-react";
@@ -95,8 +94,32 @@ export default function VendorRow({
     return `${packing.perRow} across${stackBit} x ${rowsBit}`;
   })();
 
+  // The whole row is now clickable - opens the editor for this vendor.
+  // Action buttons inside (move, delete) call e.stopPropagation() so
+  // clicking them doesn't also navigate to the editor. Wrapping the
+  // row in <Link> would force <a><button></button></a> which is
+  // invalid HTML, so we use onClick on the wrapper div with the
+  // standard role/tabIndex/keyboard pattern instead.
+  function openEditor() {
+    const sp = new URLSearchParams(window.location.search);
+    sp.set("edit", vendorId);
+    router.replace(`/jobs/${jobId}?${sp.toString()}`, { scroll: false });
+  }
+
   return (
-    <div className="bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 hover:border-[#d1d5db] hover:bg-[#eff1f4] transition-colors duration-150 group">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={openEditor}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openEditor();
+        }
+      }}
+      className="bg-[#f8f9fa] border border-[#e6e8eb] rounded-md p-3 hover:border-[#0e3e7a] hover:bg-[#0e3e7a]/[0.04] transition-colors duration-150 group cursor-pointer focus:outline-none focus-visible:border-[#0e3e7a] focus-visible:bg-[#0e3e7a]/[0.04] active:translate-y-[0.5px]"
+      title="Click to edit"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
@@ -141,15 +164,19 @@ export default function VendorRow({
             </div>
             <div className="text-[9px] text-[#9ca3af] tracking-wider">LB</div>
           </div>
-          <div className="flex gap-1 items-center">
-            <Link
-              href={`/jobs/${jobId}?edit=${vendorId}`}
-              scroll={false}
-              className="text-[#9ca3af] hover:text-[#0e3e7a] p-2 -m-2 transition-colors duration-150 active:translate-y-[0.5px]"
-              title="Edit"
-            >
-              <FileText size={14} />
-            </Link>
+          {/* Action buttons stop propagation so clicking them doesn't
+              also fire the row-level openEditor handler. The visible
+              "click row to edit" affordance is the cursor + the
+              hover state on the whole row plus the small pencil hint. */}
+          <div
+            className="flex gap-1 items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Pencil
+              size={12}
+              className="text-[#9ca3af] group-hover:text-[#0e3e7a] transition-colors duration-150"
+              aria-hidden
+            />
             <MoveVendorMenu vendorId={vendorId} otherTrucks={otherTrucks} />
             <button
               type="button"
