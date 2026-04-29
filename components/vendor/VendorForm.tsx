@@ -19,14 +19,11 @@ import {
   type VendorInput,
 } from "@/lib/packing";
 import {
-  CASE_CATEGORY_LABELS,
-  CASE_CATEGORY_ORDER,
   INPUT_METHOD_LABELS,
-  type CaseCategory,
   type CasePreset,
   type InputMethod,
 } from "@/lib/vendor-input";
-import { formatDims } from "@/lib/units";
+import CasePicker from "@/components/case/CasePicker";
 import {
   deleteVendorAction,
   updateVendorAction,
@@ -55,7 +52,7 @@ const METHODS: Array<{ id: InputMethod; icon: typeof Package; desc: string }> =
   [
     { id: "linear", icon: Ruler, desc: "Vendor gave a direct linear ft #" },
     { id: "dimensions", icon: Box, desc: "L x W x H" },
-    { id: "pieces", icon: Package, desc: "Pelican, SKB, road case, etc." },
+    { id: "pieces", icon: Package, desc: "Pick from the case library" },
     { id: "cubic", icon: Box, desc: "Vendor quoted cubic feet" },
     { id: "footprint", icon: Box, desc: "Staging floor area sq ft" },
     { id: "pallets", icon: Package, desc: 'Standard 48" pallets' },
@@ -306,29 +303,6 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
     [cases, caseId],
   );
 
-  // Group cases by their category for the <select> render. Uncategorized
-  // org cases get bucketed under a trailing "Other" group.
-  const groupedCases = useMemo(() => {
-    const buckets = new Map<CaseCategory | "__other__", CasePreset[]>();
-    for (const c of cases) {
-      const key: CaseCategory | "__other__" = c.category ?? "__other__";
-      const list = buckets.get(key);
-      if (list) list.push(c);
-      else buckets.set(key, [c]);
-    }
-    const groups: Array<{ label: string; items: CasePreset[] }> = [];
-    for (const cat of CASE_CATEGORY_ORDER) {
-      const items = buckets.get(cat);
-      if (items && items.length > 0) {
-        groups.push({ label: CASE_CATEGORY_LABELS[cat], items });
-      }
-    }
-    const other = buckets.get("__other__");
-    if (other && other.length > 0) {
-      groups.push({ label: "Other", items: other });
-    }
-    return groups;
-  }, [cases]);
 
   const previewInput: VendorInput | null = useMemo(() => {
     const stackOverride: boolean | undefined =
@@ -591,23 +565,11 @@ export default function VendorForm({ jobId, truck, cases, initial }: Props) {
               <label className="text-[10px] tracking-[0.15em] text-[#9ca3af] uppercase block mb-1.5">
                 Case type
               </label>
-              <select
+              <CasePicker
+                cases={cases}
                 value={caseId}
-                onChange={(e) => setCaseId(e.target.value)}
-                className="w-full bg-white border border-[#d1d5db] rounded px-3 py-2 text-sm focus:outline-none focus:border-[#0e3e7a]"
-              >
-                <option value="">Select case type...</option>
-                {groupedCases.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.items.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label} &nbsp;·&nbsp;{" "}
-                        {formatDims(c.depthIn, c.widthIn, c.heightIn)}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+                onChange={setCaseId}
+              />
             </div>
             <NumberField
               label="Quantity"

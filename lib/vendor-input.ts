@@ -22,7 +22,7 @@ export type InputMethod =
 export const INPUT_METHOD_LABELS: Record<InputMethod, string> = {
   linear: "Linear feet",
   dimensions: "Dimensions",
-  pieces: "Pieces + case",
+  pieces: "Cases",
   cubic: "Cubic feet",
   footprint: "Footprint",
   pallets: "Pallets",
@@ -107,7 +107,8 @@ export type CaseCategory =
   | "trunk_utility"
   | "audio_video"
   | "work_box"
-  | "rack";
+  | "rack"
+  | "pelican";
 
 // Display order in the case-picker dropdown.
 export const CASE_CATEGORY_ORDER: readonly CaseCategory[] = [
@@ -116,6 +117,7 @@ export const CASE_CATEGORY_ORDER: readonly CaseCategory[] = [
   "audio_video",
   "work_box",
   "rack",
+  "pelican",
 ] as const;
 
 export const CASE_CATEGORY_LABELS: Record<CaseCategory, string> = {
@@ -124,6 +126,7 @@ export const CASE_CATEGORY_LABELS: Record<CaseCategory, string> = {
   audio_video: "Audio-Video Cases",
   work_box: "Work Boxes",
   rack: "Rack Cases",
+  pelican: "Pelican Cases",
 };
 
 export type CasePreset = CaseDimensions & {
